@@ -1,4 +1,4 @@
-"""ByteBind: a reference implementation of the ByteBind protocol (draft 0.6, see SPEC.md)."""
+"""ByteBind: a reference implementation of the ByteBind protocol (draft 0.7, see SPEC.md)."""
 
-__version__ = "0.6.0"
-SPEC_DRAFT = "0.6"
+__version__ = "0.7.0"
+SPEC_DRAFT = "0.7"

@@ -19,7 +19,6 @@ import time
 import urllib.parse
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Callable
 
 from . import protocol as p
@@ -101,10 +100,6 @@ def _digest(value: str) -> bytes:
     return hashlib.sha256(value.encode()).digest()
 
 
-def _timestamp(value: str) -> float:
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
-
-
 @dataclass(frozen=True)
 class Lease:
     device_id: str | None
@@ -142,11 +137,15 @@ class RelyingParty:
     """PLEASE/WHO and AFFIRM/RESPONSE handling for one public origin.
 
     ``lease_seconds`` bounds a session after each successful ceremony; it is
-    further capped at the GRANT's ``expires_at`` (SPEC.md 13.2, 15.1).
+    further capped at the GRANT's ``expires_in``, measured on this host's clock
+    (SPEC.md 13.2, 15.1). Expiry stays server-side: nothing this class returns
+    for the Client carries it (SPEC.md 15.2).
     """
 
     def __init__(self, authority: AuthorityClient, *, origin: str, audience: str, database: str,
                  lease_seconds: int = 180, max_pending: int = 500, now: Callable[[], float] = time.time):
+        if lease_seconds < 90:
+            raise ValueError("lease_seconds must be at least 90: clients renew every 60 seconds")
         self.authority, self.origin, self.audience = authority, origin, audience
         self.database, self.lease_seconds, self.max_pending, self.now = database, lease_seconds, max_pending, now
         with closing(self._connect()) as connection:
@@ -163,7 +162,7 @@ class RelyingParty:
 
     # PLEASE -> BEGIN -> TRY -> WHO
     def please(self, origin: str | None, *, request: Any = None, q: bytes | None = None) -> tuple[dict, str]:
-        """Start a ceremony. Returns the WHO body and a state token for an HttpOnly cookie.
+        """Start a ceremony. Returns the WHO body (no expiry) and a state token for an HttpOnly cookie.
 
         For the transaction-bound profile pass the protected ``request`` (JSON-serializable,
         enough to execute it later) and its digest ``q``; the RP stores the request itself.
@@ -178,13 +177,13 @@ class RelyingParty:
                 raise CeremonyError("too many pending ceremonies")
         who = self.authority.begin(self.audience, profile, q)
         state = p.b64encode(secrets.token_bytes(32))
-        expires = _timestamp(who["expires_at"]) + 15  # attest window plus the redeem window and slack
+        expires = self.now() + int(who["expires_in"]) + 15  # attest window plus the redeem window and slack
         with closing(self._connect()) as connection:
             connection.execute(
                 "INSERT INTO ceremonies (cid, state_hash, profile, request, expires_at) VALUES (?, ?, ?, ?, ?)",
                 (who["cid"], _digest(state), profile, json.dumps(request) if profile == "tx" else None, expires),
             )
-        return {"cid": who["cid"], "C": who["C"], "authority": who["authority"], "expires_at": who["expires_at"]}, state
+        return {"cid": who["cid"], "C": who["C"], "authority": who["authority"]}, state
 
     # AFFIRM -> REDEEM -> GRANT -> RESPONSE
     def affirm(self, origin: str | None, body: object, state: str | None, previous_session: str | None = None) -> Affirmed:
@@ -208,10 +207,10 @@ class RelyingParty:
             raise CeremonyError(f"REDEEM refused: {exc.code}") from exc
         if grant.get("active") is not True or grant.get("audience") != self.audience:
             raise CeremonyError("GRANT is not active for this audience")
-        grant_expires = _timestamp(grant["expires_at"])
+        now = self.now()  # GRANT's expires_in counts from receipt, on this host's clock
+        grant_expires = now + int(grant["expires_in"])
         if profile == "tx":
             return Affirmed(grant, None, None, json.loads(request))
-        now = self.now()
         lease = Lease(grant["claims"].get("device_id"), grant["claims"], min(now + self.lease_seconds, grant_expires))
         token = p.b64encode(secrets.token_bytes(32))
         with closing(self._connect()) as connection:

@@ -37,6 +37,7 @@ def _mutate(tmp_path, change):
     (lambda d: d["rp"][0]["policy"].__setitem__("deny_shared", False), "shared-in"),
     (lambda d: d["rp"][0].__setitem__("claims", ["peer_ip"]), "claims"),
     (lambda d: d["rp"][0].__setitem__("grant_ttl", 3600), "grant_ttl"),
+    (lambda d: d["rp"][0].__setitem__("grant_ttl", 60), "at least 90"),
     (lambda d: d["rp"].append(copy.deepcopy(d["rp"][0])), "duplicated"),
     (lambda d: d["rp"][1].update({"tailnet_node": None, "unix_uid": d["rp"][0]["unix_uid"]}), "share a unix_uid"),
 ])

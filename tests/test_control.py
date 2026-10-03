@@ -38,9 +38,11 @@ def test_session_ceremony_over_the_unix_socket(config, unix_control):
     path, store = unix_control
     authority = AuthorityClient(f"unix:{path}")
     who = authority.begin("manage")
-    assert set(who) == {"cid", "C", "authority", "expires_at"} and who["authority"] == config.attest_url
+    assert set(who) == {"cid", "C", "authority", "expires_in"} and who["authority"] == config.attest_url
+    assert who["expires_in"] == 30, "relative durations only on the control channel"
     grant = authority.redeem(who["cid"], complete_attest(config, store, who), "manage")
     assert grant["active"] is True and grant["rp_id"] == "app" and grant["audience"] == "manage"
+    assert grant["expires_in"] == 180 and "expires_at" not in grant and "attested_at" not in grant
     assert grant["claims"] == {"authorization": ["manage:read"], "device_id": "nLaptop1CNTRL"}, "only the claims this RP may see"
 
 

@@ -11,6 +11,8 @@ const ByteBind = (() => {
   };
   const REQUEST_LABEL = "bytebind/v1/tx/request";
   const SIZES = { cid: 16, secret: 32, ip: 16, h2: 76 };
+  // Clients renew on a fixed interval; expiry is opaque to them (SPEC.md 15.2).
+  const RENEW_INTERVAL_MS = 60000;
 
   const bytes = (text) => encoder.encode(text);
 
@@ -136,7 +138,7 @@ const ByteBind = (() => {
     return jsonPost(fetchImpl, affirmUrl, affirmBody);
   }
 
-  return { b64encode, b64decode, requestDigest, computeH1, openH2, computeR, session, transaction, CeremonyFailure, LABELS };
+  return { b64encode, b64decode, requestDigest, computeH1, openH2, computeR, session, transaction, CeremonyFailure, LABELS, RENEW_INTERVAL_MS };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = ByteBind;

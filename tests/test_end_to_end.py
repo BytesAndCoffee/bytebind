@@ -100,10 +100,8 @@ def test_lease_never_outlasts_the_grant(config, unix_control, tmp_path):
     with TestClient(create_attest_app(config, FakeTailnet(), store), base_url=ATTEST, client=(PEER, 1)) as authority:
         affirm = browser_prove(authority, who)
     done = rp.affirm(APP, affirm, state)
-    from bytebind.rp import _timestamp
-
-    assert done.lease.expires_at == _timestamp(done.grant["expires_at"])
-    assert done.lease.expires_at - rp.now() <= 181
+    assert done.grant["expires_in"] == 180
+    assert 179 <= done.lease.expires_at - rp.now() <= 180, "capped at the GRANT, not the RP's 3600"
 
 
 def test_rp_refuses_a_malformed_affirm(config, unix_control, tmp_path):
@@ -112,3 +110,43 @@ def test_rp_refuses_a_malformed_affirm(config, unix_control, tmp_path):
     for body in ({}, {"cid": "x"}, {"cid": "x", "R": "y", "IP": "100.64.0.1"}, [], {"cid": 1, "R": "y"}):
         with pytest.raises(CeremonyError):
             rp.affirm(APP, body, "state")
+
+
+def test_expiry_is_opaque_to_the_client(world):
+    """SPEC.md 15.2: no expiry in WHO, in RESPONSE, in /status, or in the session cookie."""
+    app, authority, _ = world
+    pleased = app.post("/bytebind/please")
+    who = pleased.json()
+    assert set(who) == {"cid", "C", "authority"}
+    response = app.post("/bytebind/affirm", json=browser_prove(authority, who))
+    assert set(response.json()) == {"device_id"}
+    session_cookie = next(c for c in response.headers.get_list("set-cookie") if c.startswith("bytebind_session="))
+    assert "max-age" not in session_cookie.lower() and "expires" not in session_cookie.lower()
+    assert "expires" not in json.dumps(app.get("/status").json())
+
+
+def test_authority_clock_skew_cannot_stretch_or_break_leases(config, short_dir, tmp_path):
+    """A Pi without a real-time clock, a day off: relative durations keep the RP's lease correct."""
+    import threading
+
+    from bytebind.authority import open_store, unix_control_server
+    from conftest import Clock
+
+    skewed = open_store(config, now=Clock(1_800_000_000.0 + 86_400))
+    server = unix_control_server(config, skewed, str(short_dir / "s.sock"))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        rp = RelyingParty(AuthorityClient(f"unix:{short_dir / 's.sock'}"), origin=APP, audience="manage", database=str(tmp_path / "rp.sqlite3"))
+        who, state = rp.please(APP)
+        with TestClient(create_attest_app(config, FakeTailnet(), skewed), base_url=ATTEST, client=(PEER, 1)) as authority:
+            affirm = browser_prove(authority, who)
+        done = rp.affirm(APP, affirm, state)
+        assert 179 <= done.lease.expires_at - rp.now() <= 180
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_rp_refuses_leases_shorter_than_a_renewal_can_survive(tmp_path):
+    with pytest.raises(ValueError, match="at least 90"):
+        RelyingParty(AuthorityClient("unix:/nonexistent.sock"), origin=APP, audience="manage", database=str(tmp_path / "x.sqlite3"), lease_seconds=60)

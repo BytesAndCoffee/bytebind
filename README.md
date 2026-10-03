@@ -6,12 +6,12 @@ management UI on its normal origin, yet grant privileged access only while the
 operator's browser is running on a device that is on the private network,
 identified by it, and authorized by it, right now. No passwords, no prompts.
 
-- **[SPEC.md](SPEC.md):** the protocol, draft 0.6.
+- **[SPEC.md](SPEC.md):** the protocol, draft 0.7.
 - **[docs/blog-post.md](docs/blog-post.md):** why it exists, in plain language.
 - **[test-vectors/bytebind-v1.json](test-vectors/bytebind-v1.json):** byte-exact vectors for both profiles.
 
 This repository is the reference implementation, in Python with a dependency-free
-browser client. It targets draft 0.6 and uses Tailscale as the attestation provider.
+browser client. It targets draft 0.7 and uses Tailscale as the attestation provider.
 
 > **Status:** draft protocol, unreviewed implementation. Do not rely on it to
 > protect anything important until it has had an independent security review.
@@ -35,6 +35,11 @@ Client              Server              Provider (Authority)
 Two profiles share it: the **session profile** mints a short lease that the page
 renews silently, and the **transaction-bound profile** wraps one exact request
 (bound by its digest `Q`) and executes it at most once.
+
+Expiry is opaque to the browser: it is never told when a challenge or lease
+ends, and simply renews every 60 seconds. Between the RP and the Authority,
+times are relative durations, so their clocks need not agree (an Authority on
+a Raspberry Pi without a real-time clock cannot stretch a lease).
 
 ## Layout
 

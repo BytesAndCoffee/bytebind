@@ -77,6 +77,14 @@ def _positive(table: dict, key: str, default: int, *, maximum: int | None = None
     return value
 
 
+def _grant_ttl(entry: dict, rp_id: str) -> int:
+    """Clients renew every 60 seconds, so a lease must survive one failed renewal (SPEC.md 15.1)."""
+    value = _positive(entry, "grant_ttl", 180, maximum=300)
+    if value < 90:
+        raise ConfigError(f"rp {rp_id}: grant_ttl must be at least 90 seconds")
+    return value
+
+
 def _strings(value: object, key: str, pattern: re.Pattern | None = None) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ConfigError(f"{key} must be a list of strings")
@@ -141,7 +149,7 @@ def parse(data: dict) -> AuthorityConfig:
         rps[rp_id] = RelyingParty(
             id=rp_id, origin=origin, audiences=frozenset(audiences),
             policy=Policy(frozenset(tags), tag_match, frozenset(_strings(policy_table.get("nodes", []), f"rp {rp_id}: policy.nodes", NODE))),
-            unix_uid=uid, tailnet_node=node, grant_ttl=_positive(entry, "grant_ttl", 180, maximum=300),
+            unix_uid=uid, tailnet_node=node, grant_ttl=_grant_ttl(entry, rp_id),
             claims=frozenset(claims), authorization=tuple(_strings(entry.get("authorization", []), f"rp {rp_id}: authorization")),
         )
     if len({rp.unix_uid for rp in rps.values() if rp.unix_uid is not None}) != sum(rp.unix_uid is not None for rp in rps.values()):

@@ -1,7 +1,7 @@
 # ByteBind Protocol
 
 **Status:** Draft  
-**Version:** 0.6  
+**Version:** 0.7  
 **Copyright:** © 2026 Bytes & Coffee Digital Studio  
 **Protocol name:** ByteBind
 
@@ -592,15 +592,16 @@ RP-visible:
     cid
     C
     authority endpoint
-    expiry
+    expires_in (seconds until the attestation window closes)
     opaque authority handle or verifier
 
 Client-visible:
     cid
     C
     authority endpoint
-    expiry
 ```
+
+Expiry is opaque to the Client (section 15.2): the client-visible portion carries no expiry. Times on the control channel are relative durations, never absolute timestamps, so clock skew between the RP and Authority hosts cannot shorten or extend any window.
 
 The RP SHOULD receive only the material it needs to continue and later redeem the transaction.
 
@@ -616,12 +617,11 @@ The RP returns the client-visible portion of the auth set, for example:
 {
   "cid": "<base64url>",
   "C": "<base64url>",
-  "authority": "https://authority.example.ts.net:8443",
-  "expires_at": "2026-10-02T23:48:34Z"
+  "authority": "https://authority.example.ts.net:8443"
 }
 ```
 
-`authority` is the Authority's base URL; the client sends `PROVE` to `<authority>/attest`. `expires_at` is an RFC 3339 UTC timestamp for the end of the attestation window.
+`authority` is the Authority's base URL; the client sends `PROVE` to `<authority>/attest`. `WHO` MUST NOT carry the attestation window's expiry: the Authority enforces it, and the Client either completes in time or fails.
 
 The RP MUST refuse a `PLEASE` whose `Origin` header is not its own public origin, so a malicious website cannot start an authentication attempt in the user's browser.
 
@@ -914,8 +914,7 @@ Example:
 ```json
 {
   "active": true,
-  "attested_at": "2026-10-02T23:48:04Z",
-  "expires_at": "2026-10-02T23:53:04Z",
+  "expires_in": 180,
   "claims": {
     "device_id": "node-abc123",
     "authorization": ["manage:read"]
@@ -929,7 +928,7 @@ The Provider SHOULD disclose only what the RP needs. For example, an RP that onl
 
 The Server MUST treat `GRANT`, not `AFFIRM`, as the point at which Provider-backed authority becomes available.
 
-`GRANT`'s `expires_at` is the latest time the Provider's authorization holds. Any session lease or other authority the RP derives from a `GRANT` MUST NOT outlast that `expires_at`; the RP MAY end it sooner.
+`GRANT`'s `expires_in` is the number of seconds, counted from when the RP receives the `GRANT`, for which the Provider's authorization holds. The RP measures it on its own clock. Any session lease or other authority the RP derives from a `GRANT` MUST NOT outlast it; the RP MAY end it sooner. `GRANT` MUST NOT carry absolute expiry timestamps.
 
 ### 13.3 RESPONSE — Server to Client
 
@@ -992,11 +991,20 @@ A management session SHOULD be treated as a lease.
 | Attestation window (`TRY` to `PROVE`) | 30 seconds | A challenge must be attested promptly |
 | Redeem window (`ATTEST` to `REDEEM`) | 10 seconds, starting at attestation | "Live" means live now, not sometime this minute |
 | Session lease after the last successful ceremony | 180 seconds, at most 5 minutes | Bounds access after the device leaves |
-| Silent renewal interval | 60 seconds | Several renewals can fail before the lease ends |
+| Silent renewal interval | 60 seconds, fixed | Several renewals can fail before the lease ends |
 
-Implementations MAY choose shorter windows. Longer ones weaken the liveness guarantee and SHOULD be justified.
+Implementations MAY choose shorter windows. Longer ones weaken the liveness guarantee and SHOULD be justified. Because Clients renew on a fixed interval, a session lease MUST be at least 90 seconds, so one failed renewal does not end it.
 
-The RP MUST enforce the lease on the server against the time of the last successful ceremony, not rely on the session cookie's own expiry, which the client controls. The lease MUST NOT outlast the `expires_at` of the `GRANT` that created or renewed it (section 13.2). Each successful renewal SHOULD rotate the session token.
+The RP MUST enforce the lease on the server against the time of the last successful ceremony, not rely on the session cookie's own expiry, which the client controls. The lease MUST NOT outlast the `expires_in` of the `GRANT` that created or renewed it, measured on the RP's clock (section 13.2). Each successful renewal SHOULD rotate the session token.
+
+### 15.2 Expiry is opaque to the Client
+
+The Client never learns when anything expires. Expiry is server-side policy: disclosing it gains the Client nothing, since the RP and Authority enforce every window on their own clocks, and it would reveal policy and server time to any page script.
+
+- `WHO` MUST NOT carry an expiry (section 10.2).
+- `RESPONSE` in the session profile MUST NOT disclose the lease's expiry or remaining time.
+- The RP SHOULD issue the session cookie without `Max-Age` or `Expires` derived from the lease (for example as a browser-session cookie), so the cookie itself does not reveal the lease.
+- The Client renews on a fixed 60-second interval while the page is open. A refused request (for example HTTP 401) or a failed ceremony tells the Client the lease is over; it learns nothing more specific.
 
 Example:
 
@@ -1004,7 +1012,7 @@ Example:
 successful ByteBind ceremony
           |
           v
-   session valid: 5 min
+   session valid: at most 5 min
           |
           +---- successful silent refresh ----> extend lease
           |

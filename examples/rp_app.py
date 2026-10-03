@@ -35,8 +35,8 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Byte
 const status = document.querySelector("#status");
 async function renew() {
   try { const lease = await ByteBind.session("/bytebind/please", "/bytebind/affirm");
-        status.textContent = `Signed in from ${lease.device_id}; lease ends ${new Date(lease.expires_at * 1000).toLocaleTimeString()}`;
-        setTimeout(renew, 60000);
+        status.textContent = `Signed in from ${lease.device_id}`;
+        setTimeout(renew, ByteBind.RENEW_INTERVAL_MS);  // fixed: the page never learns when the lease ends
   } catch (error) { status.textContent = `Not signed in (${error.message})`; }
 }
 document.querySelector("#restart").addEventListener("click", async () => {
@@ -57,7 +57,7 @@ def create_app(rp: RelyingParty | None = None) -> FastAPI:
     operations = {"restart": lambda body: (restarts.__setitem__("count", restarts["count"] + 1),
                                            {"restarted": body.get("service"), "count": restarts["count"]})[1]}
 
-    def set_cookie(response: Response, name: str, value: str, max_age: int, path: str) -> None:
+    def set_cookie(response: Response, name: str, value: str, max_age: int | None, path: str) -> None:
         response.set_cookie(name, value, max_age=max_age, path=path, secure=True, httponly=True, samesite="strict")
 
     def failed(status: int = 401) -> JSONResponse:
@@ -114,9 +114,9 @@ def create_app(rp: RelyingParty | None = None) -> FastAPI:
             result = operations[done.request["operation"]](done.request["body"])
             response = JSONResponse(result, headers={"Cache-Control": "no-store"})
         else:
-            response = JSONResponse({"device_id": done.lease.device_id, "expires_at": done.lease.expires_at},
-                                    headers={"Cache-Control": "no-store"})
-            set_cookie(response, SESSION_COOKIE, done.session_token, int(done.lease.expires_at - rp.now()) + 1, "/")
+            # No expiry for the Client (SPEC.md 15.2): no lease time in the body, and a browser-session cookie.
+            response = JSONResponse({"device_id": done.lease.device_id}, headers={"Cache-Control": "no-store"})
+            set_cookie(response, SESSION_COOKIE, done.session_token, None, "/")
         response.delete_cookie(STATE_COOKIE, path="/bytebind/", secure=True, httponly=True, samesite="strict")
         return response
 
@@ -125,8 +125,8 @@ def create_app(rp: RelyingParty | None = None) -> FastAPI:
         lease = rp.session(request.cookies.get(SESSION_COOKIE))
         if lease is None:
             return failed()
-        return JSONResponse({"device_id": lease.device_id, "authorization": lease.claims.get("authorization", []),
-                             "expires_at": lease.expires_at}, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"device_id": lease.device_id, "authorization": lease.claims.get("authorization", [])},
+                            headers={"Cache-Control": "no-store"})
 
     @app.post("/bytebind/logout")
     def logout(request: Request):

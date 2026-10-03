@@ -24,7 +24,6 @@ import sys
 import threading
 import time
 import urllib.parse
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -39,10 +38,6 @@ from .tailscale import AttestationError, Directory, LocalAPI, authorize, identif
 logger = logging.getLogger("bytebind.authority")
 MAX_ATTEST_BODY = 1024
 MAX_CONTROL_BODY = 4096
-
-
-def rfc3339(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class PeerLimiter:
@@ -204,8 +199,9 @@ class Control:
             raise ControlError(400, "malformed", exc.reason) from exc
         except TransactionError as exc:
             raise ControlError(429, "too_many_pending", exc.reason) from exc
+        # Relative durations only on the control channel: host clocks need not agree (SPEC.md 10.1).
         return {"cid": p.b64encode(begun.cid), "C": p.b64encode(begun.c), "authority": self.config.attest_url,
-                "expires_at": rfc3339(begun.expires_at)}
+                "expires_in": max(0, round(begun.expires_at - self.store.now()))}
 
     def redeem(self, rp: RelyingParty, body: object) -> dict[str, Any]:
         if not isinstance(body, dict) or set(body) != {"cid", "R", "audience"}:
@@ -222,8 +218,7 @@ class Control:
         if "tags" in rp.claims:
             claims["tags"] = redeemed.claims["tags"]
         logger.info("granted rp=%s audience=%s node=%s", rp.id, body["audience"], redeemed.claims["device_id"])
-        return {"active": True, "rp_id": rp.id, "audience": body["audience"], "attested_at": rfc3339(redeemed.attested_at),
-                "expires_at": rfc3339(self.store.now() + rp.grant_ttl), "claims": claims}
+        return {"active": True, "rp_id": rp.id, "audience": body["audience"], "expires_in": rp.grant_ttl, "claims": claims}
 
 
 def peer_uid(connection: socket.socket) -> int:
