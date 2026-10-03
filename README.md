@@ -8,6 +8,8 @@ identified by it, and authorized by it, right now. No passwords, no prompts.
 
 - **[SPEC.md](SPEC.md):** the protocol, draft 0.7.
 - **[docs/blog-post.md](docs/blog-post.md):** why it exists, in plain language.
+- **[docs/OVERVIEW.md](docs/OVERVIEW.md):** the ceremony in one paragraph.
+- **[docs/ROADMAP.md](docs/ROADMAP.md):** what's planned for draft 0.8, open questions, and what is and isn't verified.
 - **[test-vectors/bytebind-v1.json](test-vectors/bytebind-v1.json):** byte-exact vectors for both profiles.
 
 This repository is the reference implementation, in Python with a dependency-free
