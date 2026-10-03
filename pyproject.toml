@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bytebind"
+version = "0.6.0"
+description = "Reference implementation of ByteBind: binding public web sessions to live presence on a private overlay network"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Bytes & Coffee Digital Studio" }]
+dependencies = [
+  "cryptography>=44",
+  "fastapi>=0.115",
+  "uvicorn>=0.32",
+]
+
+[project.optional-dependencies]
+dev = ["httpx>=0.28", "pytest>=8"]
+
+[project.scripts]
+bytebind-authority = "bytebind.authority:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bytebind"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["src", "."]

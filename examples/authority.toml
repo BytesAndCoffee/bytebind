@@ -1,0 +1,36 @@
+# Example ByteBind Authority configuration. Every value is validated at startup.
+
+[authority]
+attest_url = "https://authority.example-tailnet.ts.net:8443"   # browser-facing PROVE endpoint
+database = "/var/lib/bytebind/authority.sqlite3"               # only the Authority opens this
+tailscale_socket = "/var/run/tailscale/tailscaled.sock"
+attest_window = 30          # seconds from TRY to PROVE (at most 30)
+redeem_window = 10          # seconds from ATTEST to REDEEM (at most 10)
+max_pending_per_rp = 200
+
+# A relying party on the same host: control over the Unix socket, identified by its user ID.
+[[rp]]
+id = "manage-app"
+origin = "https://app.example.com"
+audiences = ["manage"]
+unix_uid = 998
+grant_ttl = 180             # seconds; RP leases never outlast it (at most 300)
+claims = ["device_id"]      # what the RP may learn: device_id and/or tags
+authorization = ["manage:read"]
+
+[rp.policy]
+tags = ["tag:mgmt"]
+tag_match = "any"           # "any" or "all" of the tags
+nodes = []                  # optional stable node IDs that must also match
+
+# A relying party on another tailnet node: control over HTTPS, identified by its node.
+[[rp]]
+id = "ops-console"
+origin = "https://ops.example.com"
+audiences = ["ops"]
+tailnet_node = "nOpsConsoleCNTRL"
+authorization = ["ops:write"]
+
+[rp.policy]
+tags = ["tag:mgmt", "tag:ops"]
+tag_match = "all"
