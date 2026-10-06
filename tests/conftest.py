@@ -13,7 +13,7 @@ from bytebind.config import parse
 ROOT = Path(__file__).resolve().parents[1]
 APP = "https://app.example"
 OTHER = "https://other.example"
-ATTEST = "https://authority.tail1234.ts.net:8443"
+ATTEST_URL = "https://authority.tail1234.ts.net:8443"
 PEER = "100.101.102.103"
 NODE = "nLaptop1CNTRL"
 OTHER_RP_NODE = "nOtherRP1CNTRL"
@@ -56,7 +56,7 @@ def config_data(database: str, *, uid: int | None = None, **app_overrides) -> di
     app.update(app_overrides)
     other = {"id": "other", "origin": OTHER, "audiences": ["ops"], "tailnet_node": OTHER_RP_NODE,
              "authorization": ["ops:write"], "policy": {"tags": ["tag:mgmt"]}}
-    return {"authority": {"attest_url": ATTEST, "database": database}, "rp": [app, other]}
+    return {"authority": {"attest_url": ATTEST_URL, "database": database}, "rp": [app, other]}
 
 
 @pytest.fixture

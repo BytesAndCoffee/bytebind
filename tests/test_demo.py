@@ -5,8 +5,8 @@ from bytebind.authority import create_attest_app
 from bytebind.config import parse
 from bytebind.demo import create_app
 from bytebind.rp import AuthorityClient, RelyingParty
-from conftest import APP, ATTEST, NODE, PEER, FakeTailnet, config_data
-from test_end_to_end import browser_prove
+from conftest import APP, ATTEST_URL, NODE, PEER, FakeTailnet, config_data
+from test_end_to_end import browser_proof
 
 
 @pytest.fixture
@@ -22,15 +22,15 @@ def test_demo_real_ceremony(config, unix_control, tmp_path, clock):
     app = create_app(rp)
     directory = FakeTailnet({PEER: (NODE, ["tag:admin"], False, 0)})
     with TestClient(app, base_url=APP, headers={"Origin": APP}) as client, TestClient(
-        create_attest_app(config, directory, store), base_url=ATTEST, client=(PEER, 40000)
+        create_attest_app(config, directory, store), base_url=ATTEST_URL, client=(PEER, 40000)
     ) as authority:
         assert client.get("/healthz").json() == {"status": "ok"}
         assert "Open admin" in client.get("/").text
         assert client.get("/healthz", headers={"Host": "evil.example"}).status_code == 400
         assert client.get("/admin", headers={"Accept": "text/html"}).status_code == 401
         assert client.post("/api/admin/check").status_code == 401
-        who = client.post("/bytebind/please").json()
-        assert client.post("/bytebind/affirm", json=browser_prove(authority, who)).status_code == 200
+        challenge = client.post("/bytebind/challenge").json()
+        assert client.post("/bytebind/proof", json=browser_proof(authority, challenge)).status_code == 200
         admin = client.get("/admin")
         assert admin.status_code == 200 and NODE in admin.text
         assert "/bytebind/client.js" in admin.text

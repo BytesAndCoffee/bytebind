@@ -10,7 +10,7 @@ application redeems before granting access.
 1. The browser requests a management lease or submits a protected operation.
 2. The application creates a transaction with the Authority over an authenticated
    control channel and returns its challenge to the browser.
-3. The browser posts a challenge MAC to the Authority's private `/attest`
+3. The browser posts a challenge MAC to the Authority's private `/attestation`
    endpoint. The Authority identifies the connecting device and checks policy.
 4. The Authority returns an encrypted secret. The browser uses it to compute a
    redemption MAC and submits that proof to the application.

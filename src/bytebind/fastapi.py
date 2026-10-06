@@ -30,8 +30,8 @@ class ByteBind:
     origin the application's request URL supplies it; deploy behind trusted host
     and proxy configuration. An existing RelyingParty can be passed as ``rp``.
 
-    ``please_per_minute`` limits ceremony starts per client address. PLEASE is
-    unauthenticated and each one holds a pending slot at the Authority, so
+    ``challenge_per_minute`` limits ceremony starts per client address. A challenge
+    request is unauthenticated and each one holds a pending slot at the Authority, so
     without a limit any client could fill the Authority's per-RP quota.
     """
 
@@ -43,10 +43,10 @@ class ByteBind:
                  directory: Directory | None = None, tailscale_socket: str | None = None,
                  authority_tag: str = AUTHORITY_TAG,
                  authority_capability: str = AUTHORITY_CAPABILITY,
-                 authority_port: int = 9443, please_per_minute: int = 30):
+                 authority_port: int = 9443, challenge_per_minute: int = 30):
         self.rp = rp
         self._rps: dict[str, RelyingParty] = {}
-        self._please_limiter = PeerLimiter(please_per_minute)
+        self._challenge_limiter = PeerLimiter(challenge_per_minute)
         self.authority = authority or os.getenv("BYTEBIND_AUTHORITY")
         self._authority_client = (AuthorityClient(self.authority) if self.authority else
                                   DiscoveringAuthorityClient(directory,
@@ -69,26 +69,26 @@ class ByteBind:
             return Response(files("bytebind").joinpath("web", "bytebind.js").read_text(),
                             media_type="application/javascript")
 
-        @app.post("/bytebind/please", include_in_schema=False)
-        def please(request: Request):
-            if not self._please_limiter.allow(request.client.host if request.client else ""):
+        @app.post("/bytebind/challenge", include_in_schema=False)
+        def challenge(request: Request):
+            if not self._challenge_limiter.allow(request.client.host if request.client else ""):
                 return JSONResponse({"error": "rate_limited"}, status_code=429,
                                     headers={"Cache-Control": "no-store", "Retry-After": "60"})
             try:
-                who, state = self._rp(request).please(request.headers.get("origin"))
+                issued, state = self._rp(request).challenge(request.headers.get("origin"))
             except CeremonyError:
                 return self._failed(403)
             except (AuthorityError, OSError):
                 return self._failed(503)
-            response = JSONResponse(who, headers={"Cache-Control": "no-store"})
+            response = JSONResponse(issued, headers={"Cache-Control": "no-store"})
             self._cookie(response, STATE_COOKIE, state, "/bytebind/", 60)
             return response
 
-        @app.post("/bytebind/affirm", include_in_schema=False)
-        async def affirm(request: Request):
+        @app.post("/bytebind/proof", include_in_schema=False)
+        async def proof(request: Request):
             try:
                 body = await request.json()
-                done = await run_in_threadpool(self._rp(request).affirm, request.headers.get("origin"),
+                done = await run_in_threadpool(self._rp(request).accept_proof, request.headers.get("origin"),
                                               body, request.cookies.get(STATE_COOKIE),
                                               request.cookies.get(SESSION_COOKIE))
             except (CeremonyError, ValueError):
@@ -166,7 +166,7 @@ class ByteBind:
         else:
             done = failed = "setTimeout(renew,ByteBind.RENEW_INTERVAL_MS);"
         return ('<script src="/bytebind/client.js"></script><script>'
-                'async function renew(){try{await ByteBind.session("/bytebind/please","/bytebind/affirm");'
+                'async function renew(){try{await ByteBind.session("/bytebind/challenge","/bytebind/proof");'
                 + done + '}catch(e){' + failed + 'const s=document.getElementById("bytebind-status");'
                 'if(s)s.textContent="Private network access required";}}renew();</script>')
 

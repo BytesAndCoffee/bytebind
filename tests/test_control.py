@@ -1,4 +1,4 @@
-"""BEGIN/TRY and REDEEM/GRANT over both conforming control transports."""
+"""Transaction creation and redemption over both conforming control transports."""
 
 from __future__ import annotations
 
@@ -17,10 +17,10 @@ from bytebind.rp import AuthorityClient, AuthorityError
 from conftest import APP, OTHER_RP_NODE, PEER, FakeTailnet, config_data
 
 
-def complete_attest(config, store, who, profile="session", q=None, n=b"\x05" * 32):
-    cid, c = p.b64decode(who["cid"], 16), p.b64decode(who["C"], 32)
+def complete_attest(config, store, challenge, profile="session", q=None, n=b"\x05" * 32):
+    cid, c = p.b64decode(challenge["cid"], 16), p.b64decode(challenge["C"], 32)
     h1 = p.compute_h1(profile, c, cid, n, q)
-    h2 = attest(config, store, FakeTailnet(), PEER, APP, {"cid": who["cid"], "N": p.b64encode(n), "H1": p.b64encode(h1)})
+    h2 = attest(config, store, FakeTailnet(), PEER, APP, {"cid": challenge["cid"], "N": p.b64encode(n), "H1": p.b64encode(h1)})
     ip, s = p.open_h2(profile, c, cid, n, h1, h2)
     return p.b64encode(p.compute_r(profile, s, cid, c, ip, q))
 
@@ -37,10 +37,10 @@ def test_peer_uid_reads_kernel_credentials():
 def test_session_ceremony_over_the_unix_socket(config, unix_control):
     path, store = unix_control
     authority = AuthorityClient(f"unix:{path}")
-    who = authority.begin("manage")
-    assert set(who) == {"cid", "C", "authority", "expires_in"} and who["authority"] == config.attest_url
-    assert who["expires_in"] == 30, "relative durations only on the control channel"
-    grant = authority.redeem(who["cid"], complete_attest(config, store, who), "manage")
+    challenge = authority.begin("manage")
+    assert set(challenge) == {"cid", "C", "authority", "expires_in"} and challenge["authority"] == config.attest_url
+    assert challenge["expires_in"] == 30, "relative durations only on the control channel"
+    grant = authority.redeem(challenge["cid"], complete_attest(config, store, challenge), "manage")
     assert grant["active"] is True and grant["rp_id"] == "app" and grant["audience"] == "manage"
     assert grant["expires_in"] == 180 and "expires_at" not in grant and "attested_at" not in grant
     assert grant["claims"] == {"authorization": ["manage:read"], "device_id": "nLaptop1CNTRL"}, "only the claims this RP may see"
@@ -50,39 +50,39 @@ def test_tx_ceremony_binds_q(config, unix_control):
     path, store = unix_control
     authority = AuthorityClient(f"unix:{path}")
     q = p.request_digest("POST", "/restart", {"content-type": "application/json"}, b"{}")
-    who = authority.begin("manage", "tx", q)
-    r = complete_attest(config, store, who, "tx", q)
-    assert authority.redeem(who["cid"], r, "manage")["active"] is True
+    challenge = authority.begin("manage", "tx", q)
+    r = complete_attest(config, store, challenge, "tx", q)
+    assert authority.redeem(challenge["cid"], r, "manage")["active"] is True
 
 
 def test_redeem_is_single_use(config, unix_control):
     path, store = unix_control
     authority = AuthorityClient(f"unix:{path}")
-    who = authority.begin("manage")
-    r = complete_attest(config, store, who)
-    authority.redeem(who["cid"], r, "manage")
+    challenge = authority.begin("manage")
+    r = complete_attest(config, store, challenge)
+    authority.redeem(challenge["cid"], r, "manage")
     with pytest.raises(AuthorityError) as error:
-        authority.redeem(who["cid"], r, "manage")
+        authority.redeem(challenge["cid"], r, "manage")
     assert error.value.status == 403
 
 
 def test_wrong_r_burns(config, unix_control):
     path, store = unix_control
     authority = AuthorityClient(f"unix:{path}")
-    who = authority.begin("manage")
-    r = complete_attest(config, store, who)
+    challenge = authority.begin("manage")
+    r = complete_attest(config, store, challenge)
     with pytest.raises(AuthorityError):
-        authority.redeem(who["cid"], p.b64encode(bytes(32)), "manage")
+        authority.redeem(challenge["cid"], p.b64encode(bytes(32)), "manage")
     with pytest.raises(AuthorityError):
-        authority.redeem(who["cid"], r, "manage")
+        authority.redeem(challenge["cid"], r, "manage")
 
 
 def test_redeem_before_attest_fails(config, unix_control):
     path, _ = unix_control
     authority = AuthorityClient(f"unix:{path}")
-    who = authority.begin("manage")
+    challenge = authority.begin("manage")
     with pytest.raises(AuthorityError):
-        authority.redeem(who["cid"], p.b64encode(bytes(32)), "manage")
+        authority.redeem(challenge["cid"], p.b64encode(bytes(32)), "manage")
 
 
 def test_unregistered_audience_and_mismatched_profile(config, unix_control):
@@ -92,12 +92,12 @@ def test_unregistered_audience_and_mismatched_profile(config, unix_control):
         authority.begin("ops")  # registered to the other RP
     assert error.value.status == 403
     with pytest.raises(AuthorityError) as error:
-        authority._post("/v1/begin", {"audience": "manage", "profile": "tx"})  # tx without Q
+        authority._post("/v1/transaction", {"audience": "manage", "profile": "tx"})  # tx without Q
     assert error.value.status == 400
     with pytest.raises(AuthorityError):
-        authority._post("/v1/begin", {"audience": "manage", "profile": "session", "allowed_origin": "https://evil.example"})
+        authority._post("/v1/transaction", {"audience": "manage", "profile": "session", "allowed_origin": "https://evil.example"})
     with pytest.raises(AuthorityError):
-        authority._post("/v1/begin", {"audience": "manage", "profile": "session", "extra": 1})
+        authority._post("/v1/transaction", {"audience": "manage", "profile": "session", "extra": 1})
 
 
 def test_unregistered_uid_is_refused(tmp_path, short_dir):
@@ -128,14 +128,14 @@ def test_socket_permissions(config, unix_control):
 def test_another_rp_cannot_redeem_and_cannot_burn(config, unix_control):
     """SPEC.md 16.3: auth sets are bound to the RP that requested them."""
     path, store = unix_control
-    who = AuthorityClient(f"unix:{path}").begin("manage")
-    r = complete_attest(config, store, who)
+    challenge = AuthorityClient(f"unix:{path}").begin("manage")
+    r = complete_attest(config, store, challenge)
     other = TestClient(create_control_app(config, FakeTailnet({"100.88.0.2": (OTHER_RP_NODE, [], False, 0)}), store),
                        base_url="https://authority.tail1234.ts.net:9443", client=("100.88.0.2", 5000))
     with other:
-        response = other.post("/v1/redeem", content=json.dumps({"cid": who["cid"], "R": r, "audience": "manage"}))
+        response = other.post("/v1/redemption", content=json.dumps({"cid": challenge["cid"], "R": r, "audience": "manage"}))
     assert response.status_code == 403
-    assert AuthorityClient(f"unix:{path}").redeem(who["cid"], r, "manage")["active"] is True, "not burned by the other RP"
+    assert AuthorityClient(f"unix:{path}").redeem(challenge["cid"], r, "manage")["active"] is True, "not burned by the other RP"
 
 
 def test_https_control_identifies_rps_by_tailnet_node(config, clock):
@@ -143,11 +143,11 @@ def test_https_control_identifies_rps_by_tailnet_node(config, clock):
     tailnet = FakeTailnet({"100.88.0.2": (OTHER_RP_NODE, [], False, 0), "100.88.0.3": ("nStranger", [], False, 0)})
     app = create_control_app(config, tailnet, store)
     with TestClient(app, base_url="https://a.ts.net", client=("100.88.0.2", 1)) as known:
-        response = known.post("/v1/begin", content=json.dumps({"audience": "ops", "profile": "session"}))
+        response = known.post("/v1/transaction", content=json.dumps({"audience": "ops", "profile": "session"}))
         assert response.status_code == 200
     for peer in ("100.88.0.3", "127.0.0.1", "203.0.113.5"):
         with TestClient(app, base_url="https://a.ts.net", client=(peer, 1)) as stranger:
-            assert stranger.post("/v1/begin", content=json.dumps({"audience": "ops", "profile": "session"})).status_code == 403
+            assert stranger.post("/v1/transaction", content=json.dumps({"audience": "ops", "profile": "session"})).status_code == 403
 
 
 def test_pending_cap_per_rp(tmp_path, clock):
@@ -169,11 +169,11 @@ def test_redeem_window(config, clock):
 
     store = open_store(config, now=clock)
     control = Control(config, store)
-    who = control.begin(config.rps["app"], {"audience": "manage", "profile": "session"})
-    r = complete_attest(config, store, who)
+    challenge = control.begin(config.rps["app"], {"audience": "manage", "profile": "session"})
+    r = complete_attest(config, store, challenge)
     clock.now += 11
     with pytest.raises(ControlError):
-        control.redeem(config.rps["app"], {"cid": who["cid"], "R": r, "audience": "manage"})
+        control.redeem(config.rps["app"], {"cid": challenge["cid"], "R": r, "audience": "manage"})
 
 
 def test_control_client_refuses_nonconforming_transports():
@@ -188,5 +188,5 @@ def test_unix_control_refuses_malformed_content_length(unix_control, length):
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(5)
         connection.connect(path)
-        connection.sendall(f"POST /v1/begin HTTP/1.1\r\nHost: x\r\nContent-Length: {length}\r\n\r\n".encode())
+        connection.sendall(f"POST /v1/transaction HTTP/1.1\r\nHost: x\r\nContent-Length: {length}\r\n\r\n".encode())
         assert connection.recv(64).startswith(b"HTTP/1.0 400")

@@ -69,10 +69,10 @@ so Secure cookies and WebCrypto work.
 | Caller → receiver | Request | Result |
 |---|---|---|
 | Browser → RP | Application-defined access POST | Challenge for a new transaction |
-| RP → Authority | Control POST `/v1/begin` | RP-scoped transaction material |
-| Browser → Authority | Private POST `/attest` | Encrypted attestation secret |
+| RP → Authority | Control POST `/v1/transaction` | RP-scoped transaction material |
+| Browser → Authority | Private POST `/attestation` | Encrypted attestation secret |
 | Browser → RP | Application-defined proof POST | Lease or operation result after redemption |
-| RP → Authority | Control POST `/v1/redeem` | Scoped authorization grant |
+| RP → Authority | Control POST `/v1/redemption` | Scoped authorization grant |
 
 The **session profile** grants a short lease, renewed every 60 seconds. Losing
 private access stops renewals; the last accepted lease determines remaining
@@ -149,7 +149,7 @@ with `tag:bytebind-authority` or the node capability
 `bytes.coffee/bytebind/authority`. Tag-only discovery uses its MagicDNS name and
 HTTPS port 9443. TLS certificate verification remains enabled. Shared, expired,
 and offline nodes are excluded; zero or multiple matches fail closed with 503.
-Discovery runs at each BEGIN and REDEEM, with no automatic replay or failover.
+Discovery runs at each transaction creation and redemption, with no automatic replay or failover.
 
 Set `BYTEBIND_AUTHORITY` to override discovery explicitly. Set
 `BYTEBIND_ORIGIN` to the public origin,
@@ -195,9 +195,9 @@ adapter currently supports session leases only. Keep the decorator below
 An unauthenticated HTML GET receives a sign-in page that completes the ceremony
 and reloads the URL; API requests receive 401, and insufficient claims receive
 403. Cookies require HTTPS. Mounted paths are `/bytebind/client.js`,
-`/bytebind/please`, `/bytebind/affirm`, and `/bytebind/logout`. State-changing
+`/bytebind/challenge`, `/bytebind/proof`, and `/bytebind/logout`. State-changing
 protected requests and logout require the configured Origin. Ceremony starts
-are rate limited per client address (`please_per_minute=`, default 30), so
+are rate limited per client address (`challenge_per_minute=`, default 30), so
 anonymous clients cannot fill the Authority's pending quota for this RP. The
 renewal script is injected only into protected HTML responses; public pages
 never contact the Authority. Injection buffers uncompressed HTML responses and
@@ -216,16 +216,16 @@ rp = RelyingParty(
     database="/var/lib/app/bytebind-rp.sqlite3",
 )
 
-challenge, state = rp.please(request.headers.get("origin"))    # Set `state` as an HttpOnly cookie
-done = rp.affirm(origin, affirm_body, state_cookie, old_token)  # Redeem the submitted proof
+challenge, state = rp.challenge(request.headers.get("origin"))  # Set `state` as an HttpOnly cookie
+done = rp.accept_proof(origin, proof, state_cookie, old_token)   # Redeem the submitted proof
 lease = rp.session(session_cookie)                              # None once the lease lapses
 ```
 
 In the browser:
 
 ```js
-const lease = await ByteBind.session("/bytebind/please", "/bytebind/affirm");
-const response = await ByteBind.transaction("/restart", { body: JSON.stringify({ service: "x" }) }, "/bytebind/affirm");
+const lease = await ByteBind.session("/bytebind/challenge", "/bytebind/proof");
+const response = await ByteBind.transaction("/restart", { body: JSON.stringify({ service: "x" }) }, "/bytebind/proof");
 ```
 
 [examples/rp_app.py](examples/rp_app.py) wires both profiles into a small FastAPI app.

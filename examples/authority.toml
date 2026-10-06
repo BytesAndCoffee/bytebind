@@ -1,11 +1,11 @@
 # Example ByteBind Authority configuration. Every value is validated at startup.
 
 [authority]
-attest_url = "https://authority.example-tailnet.ts.net:8443"   # browser-facing PROVE endpoint
+attest_url = "https://authority.example-tailnet.ts.net:8443"   # browser-facing attestation endpoint
 database = "/var/lib/bytebind/authority.sqlite3"               # only the Authority opens this
 tailscale_socket = "/var/run/tailscale/tailscaled.sock"
-attest_window = 30          # seconds from TRY to PROVE (at most 30)
-redeem_window = 10          # seconds from ATTEST to REDEEM (at most 10)
+attest_window = 30          # seconds from transaction creation to attestation (at most 30)
+redeem_window = 10          # seconds from attestation to redemption (at most 10)
 max_pending_per_rp = 200
 
 # A relying party on the same host: control over the Unix socket, identified by its user ID.

@@ -80,7 +80,7 @@ def test_every_part_of_h2_is_authenticated():
         with pytest.raises(p.ProtocolError):
             p.open_h2("session", c, cid, n, h1, bytes(tampered))
     with pytest.raises(p.ProtocolError):
-        p.open_h2("session", c, cid, b"\x01" * 32, h1, h2)  # another N: a replayed ATTEST
+        p.open_h2("session", c, cid, b"\x01" * 32, h1, h2)  # another N: a replayed attestation response_URL
     assert p.seal_h2("session", c, cid, n, h1, bytes(16), s)[:12] != h2[:12], "fresh IV per H2"
 
 

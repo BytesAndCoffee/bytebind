@@ -161,7 +161,7 @@ ceremony, reloads, and shows the device identity. “Check access” performs an
 server-side lease and tag check. After disconnecting from the tailnet, renewal
 stops; the last accepted lease remains usable until its server-side expiry.
 
-A 503 from `/bytebind/please` usually means discovery failed or the control
+A 503 from `/bytebind/challenge` usually means discovery failed or the control
 listener is unavailable: check LocalAPI access, the role tag/capability, audience,
 matching node count, and control HTTPS connectivity. A 403 during the ceremony
 can indicate an origin, RP registration, or device policy mismatch. A 403 on an

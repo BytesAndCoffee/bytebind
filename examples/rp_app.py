@@ -1,8 +1,8 @@
 """An example ByteBind relying party (FastAPI) showing both profiles.
 
-* Session profile: POST /bytebind/please, then POST /bytebind/affirm, then GET /status.
-* Transaction-bound profile: POST /restart is the protected request itself (PLEASE);
-  the server answers 202 with WHO, and the AFFIRM's response is the restart's result.
+* Session profile: POST /bytebind/challenge, then POST /bytebind/proof, then GET /status.
+* Transaction-bound profile: POST /restart is the protected request itself (the access request);
+  the server answers 202 with a challenge, and the proof submission's response is the restart's result.
 
 Run behind your public HTTPS origin, for example:
 
@@ -34,14 +34,14 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Byte
 <script>
 const status = document.querySelector("#status");
 async function renew() {
-  try { const lease = await ByteBind.session("/bytebind/please", "/bytebind/affirm");
+  try { const lease = await ByteBind.session("/bytebind/challenge", "/bytebind/proof");
         status.textContent = `Signed in from ${lease.device_id}`;
         setTimeout(renew, ByteBind.RENEW_INTERVAL_MS);  // fixed: the page never learns when the lease ends
   } catch (error) { status.textContent = `Not signed in (${error.message})`; }
 }
 document.querySelector("#restart").addEventListener("click", async () => {
-  const response = await ByteBind.transaction("/restart", { body: JSON.stringify({ service: "demo" }) }, "/bytebind/affirm");
-  status.textContent = `RESPONSE: ${JSON.stringify(await response.json())}`;
+  const response = await ByteBind.transaction("/restart", { body: JSON.stringify({ service: "demo" }) }, "/bytebind/proof");
+  status.textContent = `Response: ${JSON.stringify(await response.json())}`;
 });
 renew();
 </script></body></html>"""
@@ -63,8 +63,8 @@ def create_app(rp: RelyingParty | None = None) -> FastAPI:
     def failed(status: int = 401) -> JSONResponse:
         return JSONResponse({"error": "ceremony_failed"}, status, headers={"Cache-Control": "no-store"})
 
-    def who_response(who: dict, state: str, status: int = 200) -> JSONResponse:
-        response = JSONResponse(who, status, headers={"Cache-Control": "no-store"})
+    def challenge_response(challenge: dict, state: str, status: int = 200) -> JSONResponse:
+        response = JSONResponse(challenge, status, headers={"Cache-Control": "no-store"})
         set_cookie(response, STATE_COOKIE, state, 60, "/bytebind/")
         return response
 
@@ -76,17 +76,17 @@ def create_app(rp: RelyingParty | None = None) -> FastAPI:
     def client_script():
         return FileResponse(str(files("bytebind").joinpath("web", "bytebind.js")), media_type="application/javascript")
 
-    @app.post("/bytebind/please")
-    def please(request: Request):
+    @app.post("/bytebind/challenge")
+    def challenge(request: Request):
         try:
-            who, state = rp.please(request.headers.get("origin"))
+            issued, state = rp.challenge(request.headers.get("origin"))
         except CeremonyError:
             return failed(403)
-        return who_response(who, state)
+        return challenge_response(issued, state)
 
     @app.post("/restart")
-    async def restart_please(request: Request):
-        """PLEASE for a transaction-bound operation: store it, bind it by Q, execute nothing yet."""
+    async def restart(request: Request):
+        """The access request for a transaction-bound operation: store it, bind it by Q, execute nothing yet."""
         body = await request.body()
         if len(body) > 4096:
             return failed(413)
@@ -101,16 +101,16 @@ def create_app(rp: RelyingParty | None = None) -> FastAPI:
         headers = {name: request.headers.get(name, "") for name in COVERED_HEADERS}
         q = request_digest(request.method, target, headers, body)
         try:
-            who, state = rp.please(request.headers.get("origin"), request={"operation": "restart", "body": parsed}, q=q)
+            issued, state = rp.challenge(request.headers.get("origin"), request={"operation": "restart", "body": parsed}, q=q)
         except CeremonyError:
             return failed(403)
-        return who_response(who, state, 202)
+        return challenge_response(issued, state, 202)
 
-    @app.post("/bytebind/affirm")
-    async def affirm(request: Request):
+    @app.post("/bytebind/proof")
+    async def proof(request: Request):
         try:
             body = json.loads(await request.body())
-            done = rp.affirm(request.headers.get("origin"), body, request.cookies.get(STATE_COOKIE), request.cookies.get(SESSION_COOKIE))
+            done = rp.accept_proof(request.headers.get("origin"), body, request.cookies.get(STATE_COOKIE), request.cookies.get(SESSION_COOKIE))
         except (CeremonyError, ValueError):
             return failed()
         if done.request is not None:  # transaction-bound: execute the stored request, once

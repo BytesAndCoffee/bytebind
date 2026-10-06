@@ -132,7 +132,7 @@ def _aesgcm(key: bytes):
 
 
 def seal_h2(profile: Profile, c: bytes, cid: bytes, n: bytes, h1: bytes, ip: bytes, s: bytes, *, iv: bytes | None = None) -> bytes:
-    """ATTEST: AES-256-GCM over IP || S. ``iv`` is only for test vectors; it is random otherwise."""
+    """The attestation response: AES-256-GCM over IP || S. ``iv`` is only for test vectors; it is random otherwise."""
     iv = secrets.token_bytes(IV_BYTES) if iv is None else iv
     if len(iv) != IV_BYTES or len(ip) != IP_BYTES or len(s) != SECRET_BYTES:
         raise ValueError("bad H2 input length")
@@ -140,7 +140,7 @@ def seal_h2(profile: Profile, c: bytes, cid: bytes, n: bytes, h1: bytes, ip: byt
 
 
 def open_h2(profile: Profile, c: bytes, cid: bytes, n: bytes, h1: bytes, h2: bytes) -> tuple[bytes, bytes]:
-    """The client's side of ATTEST; returns (IP, S)."""
+    """The client's side of the attestation response; returns (IP, S)."""
     from cryptography.exceptions import InvalidTag
 
     if len(h2) != H2_BYTES:

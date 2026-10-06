@@ -88,24 +88,24 @@ const ByteBind = (() => {
     constructor(step, status) { super(`${step} failed`); this.step = step; this.status = status; }
   }
 
-  // PROVE -> ATTEST, then compute R. Returns the AFFIRM body.
-  async function proveAndAffirmBody(who, profile, q, fetchImpl) {
-    const cid = b64decode(who.cid, SIZES.cid);
-    const c = b64decode(who.C, SIZES.secret);
+  // Attestation, then compute R. Returns the proof to submit to the RP.
+  async function attestAndProve(challenge, profile, q, fetchImpl) {
+    const cid = b64decode(challenge.cid, SIZES.cid);
+    const c = b64decode(challenge.C, SIZES.secret);
     const n = globalThis.crypto.getRandomValues(new Uint8Array(SIZES.secret));
     const h1 = await computeH1(profile, c, cid, n, q);
     let attested;
     try {
-      attested = await fetchImpl(`${who.authority}/attest`, {
+      attested = await fetchImpl(`${challenge.authority}/attestation`, {
         method: "POST", mode: "cors", credentials: "omit", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cid: who.cid, N: b64encode(n), H1: b64encode(h1) }),
+        body: JSON.stringify({ cid: challenge.cid, N: b64encode(n), H1: b64encode(h1) }),
       });
     } catch (_) {
-      throw new CeremonyFailure("PROVE", 0);  // not on the private network, or blocked by the browser
+      throw new CeremonyFailure("attestation", 0);  // not on the private network, or blocked by the browser
     }
-    if (!attested.ok) throw new CeremonyFailure("ATTEST", attested.status);
+    if (!attested.ok) throw new CeremonyFailure("attestation", attested.status);
     const { ip, s } = await openH2(profile, c, cid, n, h1, b64decode((await attested.json()).H2, SIZES.h2));
-    return { cid: who.cid, R: b64encode(await computeR(profile, s, cid, c, ip, q)) };
+    return { cid: challenge.cid, R: b64encode(await computeR(profile, s, cid, c, ip, q)) };
   }
 
   const jsonPost = (fetchImpl, url, body) => fetchImpl(url, {
@@ -113,29 +113,29 @@ const ByteBind = (() => {
     body: JSON.stringify(body),
   });
 
-  // Session profile: PLEASE a lease, then AFFIRM. Resolves to the RESPONSE body.
-  async function session(pleaseUrl, affirmUrl, fetchImpl = globalThis.fetch.bind(globalThis)) {
-    const pleased = await jsonPost(fetchImpl, pleaseUrl, {});
-    if (!pleased.ok) throw new CeremonyFailure("PLEASE", pleased.status);
-    const affirmBody = await proveAndAffirmBody(await pleased.json(), "session", undefined, fetchImpl);
-    const response = await jsonPost(fetchImpl, affirmUrl, affirmBody);
-    if (!response.ok) throw new CeremonyFailure("AFFIRM", response.status);
+  // Session profile: request a challenge for a lease, then submit the proof. Resolves to the application response body.
+  async function session(challengeUrl, proofUrl, fetchImpl = globalThis.fetch.bind(globalThis)) {
+    const challenged = await jsonPost(fetchImpl, challengeUrl, {});
+    if (!challenged.ok) throw new CeremonyFailure("challenge", challenged.status);
+    const proof = await attestAndProve(await challenged.json(), "session", undefined, fetchImpl);
+    const response = await jsonPost(fetchImpl, proofUrl, proof);
+    if (!response.ok) throw new CeremonyFailure("proof", response.status);
     return response.json();
   }
 
-  // Transaction-bound profile: PLEASE carries the protected request itself.
-  // The server answers 202 with WHO; RESPONSE is the protected operation's own response.
-  async function transaction(url, { method = "POST", body = "", contentType = "application/json" } = {}, affirmUrl,
+  // Transaction-bound profile: the access request is the protected request itself.
+  // The server answers 202 with a challenge; the proof's response is the protected operation's own response.
+  async function transaction(url, { method = "POST", body = "", contentType = "application/json" } = {}, proofUrl,
     fetchImpl = globalThis.fetch.bind(globalThis)) {
     const bodyBytes = typeof body === "string" ? bytes(body) : body;
     const target = new URL(url, globalThis.location ? globalThis.location.href : undefined);
-    const pleased = await fetchImpl(target.href, {
+    const challenged = await fetchImpl(target.href, {
       method, credentials: "same-origin", headers: { "Content-Type": contentType }, body: bodyBytes,
     });
-    if (pleased.status !== 202) throw new CeremonyFailure("PLEASE", pleased.status);
+    if (challenged.status !== 202) throw new CeremonyFailure("challenge", challenged.status);
     const q = await requestDigest(method, target.pathname + target.search, { "content-type": contentType }, bodyBytes);
-    const affirmBody = await proveAndAffirmBody(await pleased.json(), "tx", q, fetchImpl);
-    return jsonPost(fetchImpl, affirmUrl, affirmBody);
+    const proof = await attestAndProve(await challenged.json(), "tx", q, fetchImpl);
+    return jsonPost(fetchImpl, proofUrl, proof);
   }
 
   return { b64encode, b64decode, requestDigest, computeH1, openH2, computeR, session, transaction, CeremonyFailure, LABELS, RENEW_INTERVAL_MS };

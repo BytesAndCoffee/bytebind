@@ -4,9 +4,9 @@ from fastapi.testclient import TestClient
 
 from bytebind.fastapi import ByteBind
 from bytebind.rp import AuthorityClient, RelyingParty
-from conftest import APP, ATTEST, PEER, FakeTailnet
+from conftest import APP, ATTEST_URL, PEER, FakeTailnet
 from bytebind.authority import create_attest_app
-from test_end_to_end import browser_prove
+from test_end_to_end import browser_proof
 
 
 def test_fastapi_dx(config, unix_control, tmp_path, clock):
@@ -39,7 +39,7 @@ def test_fastapi_dx(config, unix_control, tmp_path, clock):
         return "<html><body>Private</body></html>"
 
     with TestClient(app, base_url=APP, headers={"Origin": APP}) as client, TestClient(
-        create_attest_app(config, FakeTailnet(), store), base_url=ATTEST, client=(PEER, 40000)
+        create_attest_app(config, FakeTailnet(), store), base_url=ATTEST_URL, client=(PEER, 40000)
     ) as authority:
         assert client.get("/admin").status_code == 401
         denied = client.get("/admin", headers={"Accept": "text/html"})
@@ -47,11 +47,11 @@ def test_fastapi_dx(config, unix_control, tmp_path, clock):
         assert not calls
         assert client.get("/page").text == "<html><body>Hello</body></html>", "public pages never start ceremonies"
         assert client.get("/bytebind/client.js").status_code == 200
-        assert client.post("/bytebind/please", headers={"Origin": "https://evil.example"}).status_code == 403
-        who = client.post("/bytebind/please").json()
-        affirmed = client.post("/bytebind/affirm", json=browser_prove(authority, who))
-        assert affirmed.status_code == 200
-        assert "expires" not in affirmed.json()
+        assert client.post("/bytebind/challenge", headers={"Origin": "https://evil.example"}).status_code == 403
+        challenge = client.post("/bytebind/challenge").json()
+        accepted = client.post("/bytebind/proof", json=browser_proof(authority, challenge))
+        assert accepted.status_code == 200
+        assert "expires" not in accepted.json()
         assert client.get("/admin").json() == {"device": "nLaptop1CNTRL"}
         dashboard = client.get("/dashboard")
         assert '/bytebind/client.js' in dashboard.text and dashboard.text.endswith("</body></html>")
@@ -61,8 +61,8 @@ def test_fastapi_dx(config, unix_control, tmp_path, clock):
         assert client.post("/bytebind/logout", headers={"Origin": "https://evil.example"}).status_code == 403
         assert client.post("/bytebind/logout").status_code == 204
         assert client.get("/admin").status_code == 401
-        who = client.post("/bytebind/please").json()
-        assert client.post("/bytebind/affirm", json=browser_prove(authority, who)).status_code == 200
+        challenge = client.post("/bytebind/challenge").json()
+        assert client.post("/bytebind/proof", json=browser_proof(authority, challenge)).status_code == 200
         clock.now += 181
         assert client.get("/admin").status_code == 401
 
@@ -74,7 +74,7 @@ def test_discovery(monkeypatch, tmp_path):
     bind = ByteBind(app)
     assert bind.authority == "unix:/tmp/authority.sock"
     assert app.state.bytebind is bind
-    assert "/bytebind/please" in app.openapi()["paths"] or any(r.path == "/bytebind/please" for r in app.routes)
+    assert "/bytebind/challenge" in app.openapi()["paths"] or any(r.path == "/bytebind/challenge" for r in app.routes)
 
 
 def test_tag_claims_and_sync_handlers(tmp_path):
@@ -131,31 +131,31 @@ def test_default_adapter_discovers_remote_authority(config, unix_control, tmp_pa
         return {"device": lease.device_id}
 
     with TestClient(app, base_url=APP, headers={"Origin": APP}) as client, TestClient(
-        create_attest_app(config, FakeTailnet(), store), base_url=ATTEST, client=(PEER, 40000)
+        create_attest_app(config, FakeTailnet(), store), base_url=ATTEST_URL, client=(PEER, 40000)
     ) as authority:
         assert client.get("/admin").status_code == 401
         assert not endpoints, "session checks must not require Authority discovery"
         directory.peer["Tags"] = []
-        assert client.post("/bytebind/please").status_code == 503
+        assert client.post("/bytebind/challenge").status_code == 503
         directory.peer["Tags"] = [discovery.AUTHORITY_TAG]
-        who = client.post("/bytebind/please").json()
-        assert client.post("/bytebind/affirm", json=browser_prove(authority, who)).status_code == 200
+        challenge = client.post("/bytebind/challenge").json()
+        assert client.post("/bytebind/proof", json=browser_proof(authority, challenge)).status_code == 200
         assert client.get("/admin").json() == {"device": "nLaptop1CNTRL"}
         assert endpoints == ["https://authority.tail123.ts.net:9443"] * 2
 
 
 def test_ceremony_starts_are_rate_limited_per_client():
     class RP:
-        def please(self, origin):
-            return {"cid": "c", "C": "k", "authority": ATTEST}, "state"
+        def challenge(self, origin):
+            return {"cid": "c", "C": "k", "authority": ATTEST_URL}, "state"
 
     app = FastAPI()
-    ByteBind(app, rp=RP(), please_per_minute=2)
+    ByteBind(app, rp=RP(), challenge_per_minute=2)
     with TestClient(app, base_url=APP, headers={"Origin": APP}) as client, TestClient(
         app, base_url=APP, headers={"Origin": APP}, client=("198.51.100.7", 1)
     ) as elsewhere:
-        assert [client.post("/bytebind/please").status_code for _ in range(3)] == [200, 200, 429]
-        assert elsewhere.post("/bytebind/please").status_code == 200
+        assert [client.post("/bytebind/challenge").status_code for _ in range(3)] == [200, 200, 429]
+        assert elsewhere.post("/bytebind/challenge").status_code == 200
 
 
 def test_renewal_keeps_its_interval_after_a_failure():

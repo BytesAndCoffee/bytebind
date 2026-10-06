@@ -106,7 +106,7 @@ class TransactionStore:
             (self.now(),),
         )
 
-    # BEGIN -> TRY
+    # Transaction creation
     def begin(self, rp_id: str, audience: str, origin: str, profile: p.Profile, q: bytes | None) -> Begun:
         p._check_profile(profile, q)
         self.cleanup()
@@ -127,7 +127,7 @@ class TransactionStore:
         """Burn only from the state the failing request expected: a race loser never burns the winner."""
         self._write("UPDATE transactions SET status = 'burned' WHERE cid = ? AND status = ?", (cid, expected))
 
-    # PROVE (check 3)
+    # Attestation (check 3)
     def pending(self, cid: bytes) -> Pending:
         row = self._read(
             "SELECT rp_id, c, s, allowed_origin, profile, q FROM transactions WHERE cid = ? AND status = 'pending' AND challenge_expires_at >= ?",
@@ -137,7 +137,7 @@ class TransactionStore:
             raise TransactionError("transaction is not pending")
         return Pending(*row)
 
-    # PROVE (check 9)
+    # Attestation (check 9)
     def mark_attested(self, cid: bytes, attestation: Attestation) -> None:
         now = self.now()
         changed = self._write(
@@ -150,7 +150,7 @@ class TransactionStore:
         if changed != 1:
             raise TransactionError("lost the attest race, or the window closed")
 
-    # REDEEM -> GRANT
+    # Redemption and grant
     def redeem(self, cid: bytes, rp_id: str, audience: str, r: bytes) -> Redeemed:
         row = self._read("SELECT rp_id, audience FROM transactions WHERE cid = ?", (cid,))
         if row is None:

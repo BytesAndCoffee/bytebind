@@ -161,10 +161,10 @@ implementation; deployments MUST preserve the specified payload and checks.
 | Caller → receiver | Request | Response | Sections |
 |---|---|---|---|
 | Browser → RP | POST to access-request endpoint | Challenge: `cid`, `C`, `authority` | 10 |
-| RP → Authority | POST `/v1/begin` over control channel | RP-scoped transaction material | 10 |
-| Browser → Authority | POST `/attest` with `cid`, `N`, `H1` | Encrypted `H2` | 11–12 |
+| RP → Authority | POST `/v1/transaction` over control channel | RP-scoped transaction material | 10 |
+| Browser → Authority | POST `/attestation` with `cid`, `N`, `H1` | Encrypted `H2` | 11–12 |
 | Browser → RP | POST to proof-submission endpoint with `cid`, `R` | Session state or operation result | 13 |
-| RP → Authority | POST `/v1/redeem` over control channel | Scoped grant | 13 |
+| RP → Authority | POST `/v1/redemption` over control channel | Scoped grant | 13 |
 
 The RP calls the control endpoints while handling the corresponding browser
 request. It returns the final application response only after successful
@@ -255,7 +255,7 @@ Q (transaction-bound profile only)
 The reference control endpoint is:
 
 ```http
-POST /v1/begin
+POST /v1/transaction
 Content-Type: application/json
 
 {"audience":"manage","profile":"session"}
@@ -326,7 +326,7 @@ The Authority returns the RP-scoped transaction material. The RP forwards the br
 }
 ```
 
-`authority` is the Authority's base URL; the client sends the attestation request to `<authority>/attest`. The challenge response MUST NOT carry the attestation window's expiry: the Authority enforces it, and the Client either completes in time or fails.
+`authority` is the Authority's base URL; the client sends the attestation request to `<authority>/attestation`. The challenge response MUST NOT carry the attestation window's expiry: the Authority enforces it, and the Client either completes in time or fails.
 
 The RP MUST refuse an access request whose `Origin` header is not its own public origin, so a malicious website cannot start an authentication attempt in the user's browser.
 
@@ -347,7 +347,7 @@ short expiry
 If such a cookie is used, the RP SHOULD store only its hash.
 
 
-## 11. POST /attest — request validation
+## 11. POST /attestation — request validation
 
 The client generates:
 
@@ -367,7 +367,7 @@ H1 = HMAC-SHA256(
 The client sends to the private ByteBind Authority:
 
 ```http
-POST /attest
+POST /attestation
 Content-Type: application/json
 Origin: https://public.example
 
@@ -539,7 +539,7 @@ The transaction-bound profile uses the transcript in section 9.2, which addition
 The Client submits the proof to the RP (the path is RP-defined):
 
 ```http
-POST /bytebind/v1/affirm
+POST /bytebind/v1/proof
 Content-Type: application/json
 
 {
@@ -559,7 +559,7 @@ After receiving a validly formed proof submission, the RP sends a redemption req
 Conceptually:
 
 ```http
-POST /v1/redeem
+POST /v1/redemption
 
 {
   "cid": "<base64url>",
@@ -1025,7 +1025,7 @@ Session freshness is bounded by the server-side lease in section 15.
 
 This document uses transaction creation, challenge response, attestation,
 proof submission, redemption, and grant to describe the HTTP exchanges.
-Existing implementation method names remain compatible with earlier drafts.
+The reference implementation uses the same terms in its names and paths.
 
 ## 28. Example implementation layout
 

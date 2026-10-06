@@ -1,4 +1,4 @@
-"""The ByteBind Authority: PROVE/ATTEST for browsers, BEGIN/TRY and REDEEM/GRANT for relying parties.
+"""The ByteBind Authority: attestation for browsers, transaction creation and redemption for relying parties.
 
 Three listeners, each narrowly scoped:
 
@@ -45,7 +45,7 @@ def open_store(config: AuthorityConfig, now: Callable[[], float] = time.time) ->
                             max_pending_per_rp=config.max_pending_per_rp, now=now)
 
 
-# --- PROVE -> ATTEST ---------------------------------------------------------------------
+# --- attestation -------------------------------------------------------------------------
 
 def attest(config: AuthorityConfig, store: TransactionStore, directory: Directory, peer: str, origin: str, body: object) -> bytes:
     """Checks 3-9 of SPEC.md 11.1 (1 and 2 are the caller's). Returns H2."""
@@ -96,7 +96,7 @@ def create_attest_app(config: AuthorityConfig, directory: Directory | None = Non
         origin = request.headers.get("origin", "")
         return origin if origin in origins and request.headers.get("host", "").lower() in hosts else None
 
-    @app.options("/attest")
+    @app.options("/attestation")
     def preflight(request: Request):
         origin = trusted(request)
         requested = {h.strip().lower() for h in request.headers.get("access-control-request-headers", "").split(",") if h.strip()}
@@ -107,11 +107,11 @@ def create_attest_app(config: AuthorityConfig, directory: Directory | None = Non
             headers["Access-Control-Allow-Private-Network"] = "true"
         return Response(status_code=204, headers=headers)
 
-    @app.post("/attest")
-    async def prove(request: Request):
+    @app.post("/attestation")
+    async def attest_endpoint(request: Request):
         origin = trusted(request)
         if origin is None:
-            logger.warning("PROVE refused: untrusted Origin or Host")
+            logger.warning("attestation refused: untrusted Origin or Host")
             return refused()
         peer = request.client.host if request.client else ""  # the socket peer; proxy headers are off
         if not limiter.allow(peer):
@@ -124,17 +124,17 @@ def create_attest_app(config: AuthorityConfig, directory: Directory | None = Non
         try:
             h2 = attest(config, store, directory, peer, origin, json.loads(raw))
         except (p.ProtocolError, TransactionError, AttestationError, ValueError) as exc:
-            logger.warning("PROVE refused peer=%s: %s", peer, getattr(exc, "reason", "malformed JSON"))
+            logger.warning("attestation refused peer=%s: %s", peer, getattr(exc, "reason", "malformed JSON"))
             return refused(origin=origin)
         except OSError:
-            logger.exception("PROVE failed: tailscaled is unavailable")
+            logger.exception("attestation failed: tailscaled is unavailable")
             return refused(503, origin)
         return JSONResponse({"H2": p.b64encode(h2)}, headers=cors(origin))
 
     return app
 
 
-# --- BEGIN -> TRY and REDEEM -> GRANT ---------------------------------------------------------
+# --- transaction creation and redemption ----------------------------------------------------
 
 class ControlError(Exception):
     def __init__(self, status: int, code: str, reason: str):
@@ -155,15 +155,15 @@ class Control:
             body = json.loads(raw)
         except ValueError as exc:
             raise ControlError(400, "malformed", "malformed JSON") from exc
-        if path == "/v1/begin":
+        if path == "/v1/transaction":
             return self.begin(rp, body)
-        if path == "/v1/redeem":
+        if path == "/v1/redemption":
             return self.redeem(rp, body)
         raise ControlError(404, "not_found", "unknown path")
 
     def begin(self, rp: RelyingParty, body: object) -> dict[str, Any]:
         if not isinstance(body, dict) or not {"audience", "profile"} <= set(body) <= {"audience", "profile", "Q", "allowed_origin"}:
-            raise ControlError(400, "malformed", "malformed BEGIN")
+            raise ControlError(400, "malformed", "malformed transaction request")
         audience, profile = body["audience"], body["profile"]
         if audience not in rp.audiences:
             raise ControlError(403, "refused", "audience not registered for this RP")
@@ -184,12 +184,12 @@ class Control:
 
     def redeem(self, rp: RelyingParty, body: object) -> dict[str, Any]:
         if not isinstance(body, dict) or set(body) != {"cid", "R", "audience"}:
-            raise ControlError(400, "malformed", "malformed REDEEM")
+            raise ControlError(400, "malformed", "malformed redemption request")
         try:
             cid, r = p.b64decode(body["cid"], p.CID_BYTES), p.b64decode(body["R"], p.SECRET_BYTES)
             redeemed = self.store.redeem(cid, rp.id, body["audience"], r)
         except (p.ProtocolError, TransactionError) as exc:
-            logger.warning("REDEEM refused rp=%s: %s", rp.id, exc.reason)
+            logger.warning("redemption refused rp=%s: %s", rp.id, exc.reason)
             raise ControlError(403, "refused", exc.reason) from exc
         claims: dict[str, Any] = {"authorization": list(rp.authorization)}
         if "device_id" in rp.claims:
