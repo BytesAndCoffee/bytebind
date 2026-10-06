@@ -163,3 +163,58 @@ def test_renewal_keeps_its_interval_after_a_failure():
     failure = script[script.index("catch(e){"):]
     assert "setTimeout(renew,ByteBind.RENEW_INTERVAL_MS)" in failure
     assert "setTimeout" not in ByteBind._script(True), "the sign-in page reports failure instead"
+
+
+def test_transaction_grant_runs_the_handler_once_after_approval(config, unix_control, tmp_path, clock):
+    from pydantic import BaseModel
+
+    from bytebind.protocol import request_digest
+
+    path, store = unix_control
+    rp = RelyingParty(AuthorityClient(f"unix:{path}"), origin=APP, audience="manage",
+                      database=str(tmp_path / "rp.sqlite3"), now=clock)
+    app = FastAPI()
+    bind = ByteBind(app, rp=rp, max_transaction_body=64)
+    runs = []
+
+    class Deploy(BaseModel):
+        version: str
+
+    @app.post("/deploy")
+    @bind(require=["manage:read"], grant=bind.TRANSACTION)
+    def deploy(body: Deploy, grant=bind.grant):  # sync handlers work too
+        runs.append((body.version, grant.device_id))
+        return {"deployed": body.version}
+
+    @app.post("/wipe")
+    @bind(require=["tag:admin"], grant=bind.TRANSACTION)
+    async def wipe():
+        runs.append("wipe")
+        return {}
+
+    def approve(client, authority, url, body):
+        challenged = client.post(url, content=body, headers={"Content-Type": "application/json"})
+        assert challenged.status_code == 202 and set(challenged.json()) == {"cid", "C", "authority"}
+        q = request_digest("POST", url, {"content-type": "application/json"}, body)
+        return browser_proof(authority, challenged.json(), "tx", q)
+
+    with TestClient(app, base_url=APP, headers={"Origin": APP}) as client, TestClient(
+        create_attest_app(config, FakeTailnet(), store), base_url=ATTEST_URL, client=(PEER, 40000)
+    ) as authority:
+        proof = approve(client, authority, "/deploy", b'{"version":"1.2"}')
+        assert runs == [], "the access request runs nothing"
+        approved = client.post("/bytebind/proof", json=proof)
+        assert approved.status_code == 200 and approved.json() == {"deployed": "1.2"}
+        assert approved.headers["cache-control"] == "no-store"
+        assert runs == [("1.2", "nLaptop1CNTRL")]
+        assert client.post("/bytebind/proof", json=proof).status_code == 401, "one approval, one run"
+        assert runs == [("1.2", "nLaptop1CNTRL")]
+
+        # The grant is checked against the handler's requirements before it runs.
+        assert client.post("/bytebind/proof", json=approve(client, authority, "/wipe", b"{}")).status_code == 403
+        assert "wipe" not in runs
+
+        assert client.post("/deploy", json={"version": "1.3"}, headers={"Origin": "https://evil.example"}).status_code == 403
+        assert client.post("/deploy", json={"version": "x" * 100}).status_code == 413
+        assert client.post("/deploy", json={"wrong": 1}).status_code == 422, "invalid requests never reach the Authority"
+        assert len(runs) == 1

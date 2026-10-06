@@ -1,141 +1,73 @@
-"""An example ByteBind relying party (FastAPI) showing both profiles.
+"""An example ByteBind relying party (FastAPI) showing both profiles through the binding.
 
-* Session profile: POST /bytebind/challenge, then POST /bytebind/proof, then GET /status.
-* Transaction-bound profile: POST /restart is the protected request itself (the access request);
-  the server answers 202 with a challenge, and the proof submission's response is the restart's result.
+* Session profile: ``@bind(require=[...])`` leases a session. An unauthenticated browser
+  gets a sign-in page that completes the ceremony; the page then renews automatically.
+* Transaction-bound profile: ``@bind(require=[...], grant=bind.TRANSACTION)`` binds one
+  approval to one request. POST /restart answers 202 with a challenge and runs nothing;
+  after the proof is redeemed, the handler runs exactly once and its result is the
+  proof submission's response.
 
 Run behind your public HTTPS origin, for example:
 
-    BYTEBIND_AUTHORITY=unix:/run/bytebind/control.sock \
-    BYTEBIND_ORIGIN=https://app.example.com \
-    BYTEBIND_AUDIENCE=manage \
-    BYTEBIND_RP_DB=/var/lib/app/bytebind-rp.sqlite3 \
+    BYTEBIND_ORIGIN=https://app.example.com \\
+    BYTEBIND_AUDIENCE=manage \\
+    BYTEBIND_RP_DB=/var/lib/app/bytebind-rp.sqlite3 \\
     uvicorn examples.rp_app:create_app --factory
+
+The Authority is discovered on the tailnet; set BYTEBIND_AUTHORITY to override it.
 """
 
 from __future__ import annotations
 
-import json
-import os
-from importlib.resources import files
+import html
 
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
-from bytebind.protocol import request_digest
-from bytebind.rp import AuthorityClient, CeremonyError, RelyingParty
+from bytebind.fastapi import ByteBind
+from bytebind.rp import RelyingParty
 
-STATE_COOKIE, SESSION_COOKIE = "bytebind_state", "bytebind_session"
-COVERED_HEADERS = ("content-type",)  # the headers Q covers for this app's protected requests
-
-PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ByteBind example</title>
-<script src="/bytebind.js"></script></head><body>
-<h1>ByteBind example</h1><p id="status">Signing in&hellip;</p><button id="restart">Restart (transaction-bound)</button>
+PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ByteBind example</title></head><body>
+<h1>ByteBind example</h1><p>Signed in from {device}.</p>
+<button id="restart">Restart (transaction-bound)</button><p id="result" role="status"></p>
 <script>
-const status = document.querySelector("#status");
-async function renew() {
-  try { const lease = await ByteBind.session("/bytebind/challenge", "/bytebind/proof");
-        status.textContent = `Signed in from ${lease.device_id}`;
-        setTimeout(renew, ByteBind.RENEW_INTERVAL_MS);  // fixed: the page never learns when the lease ends
-  } catch (error) { status.textContent = `Not signed in (${error.message})`; }
-}
-document.querySelector("#restart").addEventListener("click", async () => {
-  const response = await ByteBind.transaction("/restart", { body: JSON.stringify({ service: "demo" }) }, "/bytebind/proof");
-  status.textContent = `Response: ${JSON.stringify(await response.json())}`;
-});
-renew();
+document.querySelector("#restart").addEventListener("click", async () => {{
+  const result = document.querySelector("#result");
+  try {{
+    const response = await ByteBind.transaction("/restart", {{ body: JSON.stringify({{ service: "demo" }}) }}, "/bytebind/proof");
+    result.textContent = `Response: ${{JSON.stringify(await response.json())}}`;
+  }} catch (error) {{ result.textContent = `Not approved (${{error.message}})`; }}
+}});
 </script></body></html>"""
 
 
+class Restart(BaseModel):
+    service: str
+
+
 def create_app(rp: RelyingParty | None = None) -> FastAPI:
-    rp = rp or RelyingParty(
-        AuthorityClient(os.environ["BYTEBIND_AUTHORITY"]), origin=os.environ["BYTEBIND_ORIGIN"],
-        audience=os.environ.get("BYTEBIND_AUDIENCE", "manage"), database=os.environ["BYTEBIND_RP_DB"],
-    )
     app = FastAPI()
+    bind = ByteBind(app, rp=rp)
     restarts = {"count": 0}
-    operations = {"restart": lambda body: (restarts.__setitem__("count", restarts["count"] + 1),
-                                           {"restarted": body.get("service"), "count": restarts["count"]})[1]}
-
-    def set_cookie(response: Response, name: str, value: str, max_age: int | None, path: str) -> None:
-        response.set_cookie(name, value, max_age=max_age, path=path, secure=True, httponly=True, samesite="strict")
-
-    def failed(status: int = 401) -> JSONResponse:
-        return JSONResponse({"error": "ceremony_failed"}, status, headers={"Cache-Control": "no-store"})
-
-    def challenge_response(challenge: dict, state: str, status: int = 200) -> JSONResponse:
-        response = JSONResponse(challenge, status, headers={"Cache-Control": "no-store"})
-        set_cookie(response, STATE_COOKIE, state, 60, "/bytebind/")
-        return response
 
     @app.get("/", response_class=HTMLResponse)
-    def page():
-        return HTMLResponse(PAGE, headers={"X-Frame-Options": "DENY"})
-
-    @app.get("/bytebind.js")
-    def client_script():
-        return FileResponse(str(files("bytebind").joinpath("web", "bytebind.js")), media_type="application/javascript")
-
-    @app.post("/bytebind/challenge")
-    def challenge(request: Request):
-        try:
-            issued, state = rp.challenge(request.headers.get("origin"))
-        except CeremonyError:
-            return failed(403)
-        return challenge_response(issued, state)
-
-    @app.post("/restart")
-    async def restart(request: Request):
-        """The access request for a transaction-bound operation: store it, bind it by Q, execute nothing yet."""
-        body = await request.body()
-        if len(body) > 4096:
-            return failed(413)
-        try:
-            parsed = json.loads(body)
-        except ValueError:
-            return failed(400)
-        # Q covers the target as sent (SPEC.md 9.2): the raw, still percent-encoded path and query.
-        query = request.scope.get("query_string", b"")
-        target = (request.scope.get("raw_path") or request.url.path.encode()).decode("latin-1") + (
-            "?" + query.decode("latin-1") if query else "")
-        headers = {name: request.headers.get(name, "") for name in COVERED_HEADERS}
-        q = request_digest(request.method, target, headers, body)
-        try:
-            issued, state = rp.challenge(request.headers.get("origin"), request={"operation": "restart", "body": parsed}, q=q)
-        except CeremonyError:
-            return failed(403)
-        return challenge_response(issued, state, 202)
-
-    @app.post("/bytebind/proof")
-    async def proof(request: Request):
-        try:
-            body = json.loads(await request.body())
-            done = rp.accept_proof(request.headers.get("origin"), body, request.cookies.get(STATE_COOKIE), request.cookies.get(SESSION_COOKIE))
-        except (CeremonyError, ValueError):
-            return failed()
-        if done.request is not None:  # transaction-bound: execute the stored request, once
-            result = operations[done.request["operation"]](done.request["body"])
-            response = JSONResponse(result, headers={"Cache-Control": "no-store"})
-        else:
-            # No expiry for the Client (SPEC.md 15.2): no lease time in the body, and a browser-session cookie.
-            response = JSONResponse({"device_id": done.lease.device_id}, headers={"Cache-Control": "no-store"})
-            set_cookie(response, SESSION_COOKIE, done.session_token, None, "/")
-        response.delete_cookie(STATE_COOKIE, path="/bytebind/", secure=True, httponly=True, samesite="strict")
-        return response
+    @bind(require=["manage:read"])
+    async def page(lease=bind.lease):
+        # The binding adds the browser client and lease renewal to protected HTML.
+        return PAGE.format(device=html.escape(lease.device_id or "an authorized device"))
 
     @app.get("/status")
-    def status(request: Request):
-        lease = rp.session(request.cookies.get(SESSION_COOKIE))
-        if lease is None:
-            return failed()
-        return JSONResponse({"device_id": lease.device_id, "authorization": lease.claims.get("authorization", [])},
-                            headers={"Cache-Control": "no-store"})
+    @bind(require=["manage:read"])
+    async def status(lease=bind.lease):
+        # No expiry for the Client (SPEC.md 15.2): the lease's deadline stays server-side.
+        return {"device_id": lease.device_id, "authorization": lease.claims.get("authorization", [])}
 
-    @app.post("/bytebind/logout")
-    def logout(request: Request):
-        rp.end_session(request.cookies.get(SESSION_COOKIE))
-        response = Response(status_code=204)
-        response.delete_cookie(SESSION_COOKIE, path="/", secure=True, httponly=True, samesite="strict")
-        return response
+    @app.post("/restart")
+    @bind(require=["manage:read"], grant=bind.TRANSACTION)
+    async def restart(request: Restart, grant=bind.grant):
+        # Runs only after a device approved this exact request: method, target, and body.
+        restarts["count"] += 1
+        return {"restarted": request.service, "count": restarts["count"], "approved_by": grant.device_id}
 
     return app

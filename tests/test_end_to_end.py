@@ -39,12 +39,15 @@ def browser_proof(authority, challenge, profile="session", q=None, n=b"\x0c" * 3
 def test_session_profile_lease_renewal_and_logout(world, clock):
     app, authority, rp = world
     assert app.get("/status").status_code == 401
+    assert "location.reload()" in app.get("/", headers={"Accept": "text/html"}).text, "sign-in page first"
     challenge = app.post("/bytebind/challenge").json()                                   # access request -> transaction -> challenge
     response = app.post("/bytebind/proof", json=browser_proof(authority, challenge))  # attestation, proof -> redemption -> grant -> response
     assert response.status_code == 200 and response.json()["device_id"] == "nLaptop1CNTRL"
     cookie = response.headers["set-cookie"]
     assert "bytebind_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie and "SameSite=strict" in cookie
     assert app.get("/status").json()["authorization"] == ["manage:read"]
+    page = app.get("/", headers={"Accept": "text/html"})
+    assert "nLaptop1CNTRL" in page.text and "/bytebind/client.js" in page.text, "protected HTML renews its lease"
     first = app.cookies.get("bytebind_session")
     renewed = app.post("/bytebind/proof", json=browser_proof(authority, app.post("/bytebind/challenge").json(), n=b"\x0d" * 32))
     assert renewed.status_code == 200 and app.cookies.get("bytebind_session") != first
@@ -61,7 +64,7 @@ def test_transaction_profile_executes_the_stored_request_exactly_once(world):
     q = p.request_digest("POST", "/restart?now=1", {"content-type": "application/json"}, body)  # the browser's own Q
     proof = browser_proof(authority, challenged.json(), "tx", q)
     response = app.post("/bytebind/proof", json=proof)
-    assert response.status_code == 200 and response.json() == {"restarted": "demo", "count": 1}  # the response is the operation's result
+    assert response.status_code == 200 and response.json() == {"restarted": "demo", "count": 1, "approved_by": "nLaptop1CNTRL"}  # the response is the operation's result
     assert app.post("/bytebind/proof", json=proof).status_code == 401, "a retried proof submission never executes twice"
 
 

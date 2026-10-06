@@ -23,8 +23,8 @@ browser client. It targets draft 0.7 and uses Tailscale as the attestation provi
   homepage and an admin page protected by `tag:admin`. Includes an
   [nginx config](examples/demo/nginx.conf), Authority registration instructions,
   and an optional [systemd service](examples/demo/bytebind-demo.service).
-- **[Two-profile example](examples/rp_app.py)** — manually wired FastAPI example
-  demonstrating session leases and transaction-bound operations.
+- **[Two-profile example](examples/rp_app.py)** — FastAPI app using the binding for
+  both a session lease and a transaction-bound operation.
 
 ### Explainer video
 
@@ -141,7 +141,21 @@ bind = ByteBind(app)
 @bind(require=["tag:admin"], grant=bind.LEASE)
 async def admin(lease=bind.lease):
     return {"device_id": lease.device_id}
+
+@app.post("/restart")
+@bind(require=["tag:admin"], grant=bind.TRANSACTION)
+async def restart(body: Restart, grant=bind.grant):
+    return {"restarted": body.service, "approved_by": grant.device_id}
 ```
+
+`bind.LEASE` grants a short session that the page renews in the background.
+`bind.TRANSACTION` binds one approval to one request: the first call stores the
+request, answers 202 with a challenge, and runs nothing. After the browser's proof
+is redeemed at `/bytebind/proof`, the stored request is replayed through the app
+and the handler runs exactly once; its response is the proof submission's
+response. The approval covers the method, the target as sent, the
+`Content-Type` header, and the body (`max_transaction_body=`, default 16 KiB).
+Call it from the browser with `ByteBind.transaction(url, { body }, "/bytebind/proof")`.
 
 No Authority address is needed: the adapter prefers an existing local
 `/run/bytebind/control.sock`, otherwise discovers a single online tailnet node
@@ -188,9 +202,10 @@ the advertised port; assigning a tag does not start the listener or register RPs
 The Authority must register this RP and audience, permit the device, and include
 `tags` in the RP's configured `claims` for `tag:admin` to be available. Every
 listed requirement must match: `tag:` requirements check device tags; other
-strings check the grant's `authorization`. Missing claims fail closed. The
-adapter currently supports session leases only. Keep the decorator below
-`@app.get(...)` as shown; handlers need not declare `lease` to be protected.
+strings check the grant's `authorization`. Missing claims fail closed. A
+transaction-bound handler's requirements are checked against its grant before
+it runs. Keep the decorator below
+`@app.get(...)` as shown; handlers need not declare `lease` or `grant` to be protected.
 
 An unauthenticated HTML GET receives a sign-in page that completes the ceremony
 and reloads the URL; API requests receive 401, and insufficient claims receive
@@ -228,7 +243,7 @@ const lease = await ByteBind.session("/bytebind/challenge", "/bytebind/proof");
 const response = await ByteBind.transaction("/restart", { body: JSON.stringify({ service: "x" }) }, "/bytebind/proof");
 ```
 
-[examples/rp_app.py](examples/rp_app.py) wires both profiles into a small FastAPI app.
+[examples/rp_app.py](examples/rp_app.py) uses the binding for both profiles in a small FastAPI app.
 
 ## Tests
 
