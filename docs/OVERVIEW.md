@@ -31,5 +31,6 @@ device. A valid session cookie remains usable until server-side expiry.
 Independent security review and real-tailnet deployment checks remain open.
 
 See [SPEC.md](../SPEC.md) for fields and validation rules,
-[ROADMAP.md](ROADMAP.md) for verification status, and
+[ROADMAP.md](ROADMAP.md) for verification status,
+[THREAT-MODEL.md](THREAT-MODEL.md) for threats and open risks, and
 [blog-post.md](blog-post.md) for the motivation.
