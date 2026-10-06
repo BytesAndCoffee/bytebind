@@ -48,6 +48,25 @@ Trust boundaries:
 | B5 | Authority → tailscaled LocalAPI | Unix socket permissions |
 | B6 | Tailnet policy → everything | Tailscale admin console and policy-file editors |
 
+### 1.1 Handshake
+
+This sequence shows a successful native ByteBind exchange. Public requests use
+HTTPS; attestation travels directly over the tailnet. RP control requests use
+the authenticated Unix-socket or tailnet HTTPS channel. For transcript encoding
+and failure handling, see SPEC.md sections 9–13.
+
+![ByteBind handshake: challenge, private attestation, redemption, and route authorization](diagrams/handshake.png)
+
+[Mermaid source](diagrams/handshake.mmd).
+
+The Authority's device policy and the RP's route requirements are separate
+checks. An attestation or redeemed grant alone does not authorize every route.
+Session renewal repeats the exchange; expiry and route requirements remain
+server-enforced. Failure burns and cross-RP rejection rules are detailed in
+T-P2 and T-P3. A failed or lost exchange can consume authorization without
+executing the operation; a lost operation response can leave its outcome unknown
+(T-R5, T-X5).
+
 ## 2. Assets
 
 | Asset | Held by | Why it matters |

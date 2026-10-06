@@ -1,0 +1,40 @@
+sequenceDiagram
+    autonumber
+    participant C as Client on device D
+    participant RP as Public RP
+    participant A as Private Authority
+    participant TS as tailscaled
+
+    C->>RP: Start session or submit protected transaction
+    Note over RP: Check Origin and request limits<br/>For tx, compute Q from the request
+    RP->>A: POST /v1/transaction: audience, profile, Q for tx
+    Note over A: Authenticate RP; check audience and profile<br/>Bind registered origin; create pending cid, C, S
+    A-->>RP: cid, C, Authority URL, relative expiry
+    Note over RP: Store state-cookie hash and deadline<br/>For tx, store the original request
+    RP-->>C: cid, C, Authority URL; set state cookie
+
+    Note over C: Generate N; compute H1<br/>For tx, compute Q from the exact sent request
+    C->>A: POST /attestation: cid, N, H1; configured Origin
+    Note over A: Check Host and Origin before reading state<br/>Check pending deadline, bound origin, and H1
+    A->>TS: status / whois for socket peer address
+    TS-->>A: Authenticated node identity and tags
+    Note over A: Reject shared or unknown peers<br/>Check identity agreement and RP device policy<br/>Atomically transition pending to attested
+    A-->>C: H2: authenticated encryption of IP and S
+    Note over C: Authenticate and decrypt H2<br/>Compute redemption proof R
+
+    C->>RP: POST /bytebind/proof: cid, R; state cookie and Origin
+    Note over RP: Check Origin and state cookie<br/>Atomically claim ceremony; check deadline
+    RP->>A: POST /v1/redemption: cid, R, audience
+    Note over A: Authenticate RP; check scope, deadline, and R<br/>Atomically consume attested transaction
+    A-->>RP: Active grant, audience, allowed claims, relative expiry
+    Note over RP: Check active grant and audience
+
+    alt Session profile
+        RP-->>C: Set lease cookie; return session result
+        C->>RP: Protected API request with lease cookie
+        Note over RP: Check lease expiry and every route requirement
+        RP-->>C: Handler result or access denied
+    else Transaction-bound profile
+        Note over RP: Replay stored request with grant<br/>Check operation and every route requirement<br/>Run handler at most once if authorized
+        RP-->>C: Operation result or access denied
+    end
