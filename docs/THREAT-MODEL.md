@@ -59,8 +59,9 @@ Trust boundaries:
 
 ## 3. What the design trusts
 
-Compromise of any of these defeats ByteBind for the RPs that depend on it.
-That's by design, but each needs to be named in deployment docs:
+ByteBind depends on these components and permissions. Compromising any of them
+defeats its protections for the affected RPs. Deployment docs should name each
+trust assumption:
 
 1. **The tailnet's policy editors and tag owners.** Whoever can apply a tag the
    Authority's policy accepts can create authorized devices (T-TS1). Whoever can
@@ -108,33 +109,33 @@ What ByteBind is meant to guarantee, and the threats that test each:
 
 ### 6.1 Protocol
 
-**T-P1. Transferable secrets — Accepted.** Anyone holding `C` can drive an
+**T-P1. Transferable secrets. Accepted.** Anyone holding `C` can drive an
 attestation, and anyone holding `S` can redeem. An authorized participant can
-deliberately relay a challenge for someone else (SPEC.md 3). The design depends
-on keeping these out of reach, not on binding them to a process.
+deliberately relay a challenge for someone else (SPEC.md 3). These secrets are
+not bound to a process; the design depends on keeping them out of reach.
 
-**T-P2. Cross-RP relay — Mitigated.** RP A's page or client attests a challenge
+**T-P2. Cross-RP relay. Mitigated.** RP A's page or client attests a challenge
 obtained from RP B. Authority check 4 requires the request `Origin` to equal
-the `allowed_origin` stored with the `cid`, and that comes from B's
-registration, not from anything B sends (`Control.begin`). Redemption checks
+the `allowed_origin` stored with the `cid`. `Control.begin` takes that origin
+from B's registration; B cannot supply a different value. Redemption checks
 `rp_id` and audience, and refuses without burning when they don't match, so one
 RP can't burn another's transactions (`store.redeem`). This depends on clients
 sending an honest `Origin`. Browsers always do. The API clients must (invariant I1).
 
-**T-P3. Replay and race — Mitigated.** Each transition is a conditional
+**T-P3. Replay and race. Mitigated.** Each transition is a conditional
 `UPDATE` that must change exactly one row. Failures burn only from the expected
 state. Connections use autocommit, so a burn can't be rolled back. A `cid` is
 128 random bits, and each one allows a single `H1` or `R` guess before it burns.
 The RP also claims a ceremony with a `DELETE` before redemption, so a repeated
 proof submission can't execute a stored request twice.
 
-**T-P4. Downgrade and cross-profile confusion — Mitigated.** The session and
+**T-P4. Downgrade and cross-profile confusion. Mitigated.** The session and
 `tx` profiles use different labels. `profile` and `Q` must agree at
 `begin`. The predecessor `tailbind/*` labels aren't accepted.
 
 ### 6.2 Authority
 
-**T-A1. Attestation from an unauthorized source — Mitigated.** The peer address
+**T-A1. Attestation from an unauthorized source. Mitigated.** The peer address
 comes from the socket, and uvicorn runs with `proxy_headers=False`. The
 Authority requires a tailnet address, a known peer that is not shared in
 (`ShareeNode`, `Sharer`), agreement between `status` and `whois` on the
@@ -142,17 +143,17 @@ StableID, and a policy match.
 The listener refuses to bind anything but a tailnet address. It depends on
 WireGuard binding source IPs to node keys, which is a trust assumption (§3.2).
 
-**T-A2. DNS rebinding and alternate hostnames — Mitigated.** `Host` must match
+**T-A2. DNS rebinding and alternate hostnames. Mitigated.** `Host` must match
 `attest_url` before any state is read. Preflights succeed only for registered
 origins, `POST`, and `Content-Type`.
 
-**T-A3. Policy weaker than intended — Partial.** `tag_match` defaults to `any`.
+**T-A3. Policy weaker than intended. Partial.** `tag_match` defaults to `any`.
 An RP registered with `tags = ["tag:mgmt", "tag:ops"]` and no `tag_match`
 accepts a node carrying either tag. `config.parse` validates syntax but can't
 tell intent. **Recommendation:** require `tag_match` to be set explicitly
 whenever more than one tag is listed. Log the effective policy at startup.
 
-**T-A4. Co-resident RP impersonation over the control channel — Partial.**
+**T-A4. Co-resident RP impersonation over the control channel. Partial.**
 The Authority identifies RPs by Unix UID or by tailnet node. On an RP host
 reached over HTTPS, *every process on that node* is the RP. Another process
 there can:
@@ -166,7 +167,7 @@ A process can't use another RP's identity or `cid`s. **Recommendation:**
 document that one node or UID equals one RP. For HTTPS, consider an optional
 per-RP credential or mTLS (SPEC.md 16.3 already allows it).
 
-**T-A5. Authority holds broad tailscaled privileges — Open (deployment).**
+**T-A5. Authority holds broad tailscaled privileges. Open (deployment).**
 `status` and `whois` go through the LocalAPI socket. On Linux, access to that
 socket is usually all-or-nothing: root or the `--operator` user. A process with
 it can also change the node's preferences or log the node out. A compromise of
@@ -174,27 +175,27 @@ the Authority's network-facing code would then reach tailscaled.
 **Recommendation:** document the minimum access. Run the attestation listener
 under a dedicated user. Track whether tailscaled offers a read-only scope.
 
-**T-A6. Control-channel parsing on the Unix socket — Low, Open.** The handler
+**T-A6. Control-channel parsing on the Unix socket. Low, Open.** The handler
 uses `str.isdigit()` and `int()` on `Content-Length` rather than
 `declared_fits`. Inputs like `"²"` or a 5,000-digit length raise, and the
 handler drops the connection. Only registered UIDs get this far.
 `ThreadingMixIn` has no thread cap. **Recommendation:** reuse `declared_fits`.
 
-**T-A7. Secrets at rest — Low, Partial.** The store holds `C` and `S` in
+**T-A7. Secrets at rest. Low, Partial.** The store holds `C` and `S` in
 plaintext. Redeemed and burned rows are deleted only by `cleanup()`, which runs
 on the next `begin`. Expired pending rows keep their secrets until then. These
 secrets are dead after expiry, but the database and its backups should be
 protected anyway. **Recommendation:** create the database with mode 0600, and
 also run cleanup on a timer.
 
-**T-A8. Wall-clock dependence — Low, Accepted.** Windows and leases use
+**T-A8. Wall-clock dependence. Low, Accepted.** Windows and leases use
 `time.time()`. A backward clock step lengthens attestation and redeem windows
 and RP leases. Durations are capped (30 s, 10 s, 300 s), so the effect is
 bounded.
 
 ### 6.3 Tailscale provider and tailnet policy
 
-**T-TS1. Tag owners can mint authorized devices — High (deployment), Accepted with guidance.**
+**T-TS1. Tag owners can mint authorized devices. High (deployment), Accepted with guidance.**
 Policy works on tags. Anyone listed in `tagOwners` for an accepted tag can tag
 any node they control: a new VM, a container running `tailscaled`, a phone.
 The `examples/tailscale` patch gives `autogroup:admin` ownership, which is the
@@ -202,7 +203,7 @@ narrowest reasonable choice. **Recommendation:** treat tag ownership as
 part of the authorization boundary in docs. Use `nodes` allowlists for high-value
 RPs. Consider Tailscale device approval and Tailnet Lock.
 
-**T-TS2. Tagged devices lose user identity and key expiry — Medium (deployment), Open.**
+**T-TS2. Tagged devices lose user identity and key expiry. Medium (deployment), Open.**
 A tagged node belongs to the tag, not to a person. Grants can't say whose laptop
 approved a transaction, and node-key expiry is off by default for tagged nodes,
 so a stolen tagged laptop stays authorized until someone removes it.
@@ -210,7 +211,7 @@ so a stolen tagged laptop stays authorized until someone removes it.
 plus app capabilities (ROADMAP: "app capabilities vs tags") or posture checks.
 Add the device's user to grants once the provider can map it reliably.
 
-**T-TS3. Network paths that inherit a node's identity — Medium, Open.**
+**T-TS3. Network paths that inherit a node's identity. Medium, Open.**
 The Authority attests *the tailnet address the connection came from*. Every one
 of these shows up as the authorized node:
 
@@ -224,26 +225,26 @@ of these shows up as the authorized node:
 container hosts, CI runners, multi-user hosts, or nodes running tailscaled proxy
 listeners with an accepted tag.
 
-**T-TS4. LocalAPI field drift — Low, Open (ROADMAP).** Parsing fails closed when
+**T-TS4. LocalAPI field drift. Low, Open (ROADMAP).** Parsing fails closed when
 it sees unknown shapes. A future change in what `ShareeNode` or `Sharer` mean
 could fail *open*. **Recommendation:** pin tests to recorded responses from each
 supported tailscaled version.
 
 ### 6.4 Authority discovery (RP side)
 
-**T-D1. A rogue Authority via tag or capability — High (deployment), Partial.**
+**T-D1. A rogue Authority via tag or capability. High (deployment), Partial.**
 With no `BYTEBIND_AUTHORITY` set, the RP uses whichever single online node carries
 `tag:bytebind-authority` or the `bytebind.example/authority` capability,
 including itself. Grants are unsigned, so whoever controls that node can issue
 any grant. Shared, expired, and offline nodes are excluded, and TLS is verified
-against the node's MagicDNS name. Even so, anyone who can apply the tag or edit
+against the node's MagicDNS name. Anyone who can apply the tag or edit
 `nodeAttrs` can become the Authority. A second advertised Authority causes
 a "multiple Authorities" error, which also makes it a DoS lever.
 **Recommendation:** set `BYTEBIND_AUTHORITY` in production (the demo env has it
 commented out). Document discovery as trusting tag owners. Longer term, pin the
 Authority's StableID, or sign grants (ROADMAP "managed Authority profile").
 
-**T-D2. The RP doesn't authenticate the Unix-socket Authority — Medium, Open.**
+**T-D2. The RP doesn't authenticate the Unix-socket Authority. Medium, Open.**
 `DiscoveringAuthorityClient` uses `/run/bytebind/control.sock` whenever that
 path *is a socket*. An explicit `unix:` endpoint is used as given. In both
 cases the RP doesn't check who owns the socket or whether its directory is
@@ -256,7 +257,7 @@ directory to be owned by root or by a configured Authority UID and not be
 group- or world-writable. Better, check the server's peer credentials
 (`SO_PEERCRED` or `getpeereid`) against that UID on every connection.
 
-**T-D3. Re-resolution between begin and redeem — Low, Open (ROADMAP).**
+**T-D3. Re-resolution between begin and redeem. Low, Open (ROADMAP).**
 Discovery runs on every control call. If the set of advertised Authorities
 changes between `begin` and `redeem`, redemption goes to a different Authority
 and fails closed. **Recommendation:** record the Authority per `cid`, as the
@@ -264,11 +265,11 @@ roadmap already plans.
 
 ### 6.5 Relying party and bindings
 
-**T-R1. Forged grant acceptance — see T-D1 and T-D2.** The RP validates only that
+**T-R1. Forged grant acceptance. see T-D1 and T-D2.** The RP validates only that
 the grant has `active: true` and the matching `audience`. That's correct while the
 channel is authenticated, so the channel is the whole defense.
 
-**T-R2. Lease cookie theft — Medium, Accepted.** The lease is a bearer cookie,
+**T-R2. Lease cookie theft. Medium, Accepted.** The lease is a bearer cookie,
 not bound to the device (SPEC.md 3). Theft paths include the browser profile,
 malware, proxies or logs that record cookies, and API-client cookie jars.
 Mitigations: `HttpOnly`, `Secure`, `SameSite=Strict`, server-side deadlines,
@@ -278,7 +279,7 @@ most 60 s while a page or client is active). If the victim is idle, it lives out
 the rest of the lease. Use the transaction profile for operations where
 three minutes of reuse is unacceptable.
 
-**T-R3. Cookie tossing from sibling subdomains — Low, Open.** The cookies are
+**T-R3. Cookie tossing from sibling subdomains. Low, Open.** The cookies are
 host-only but don't use the `__Host-` prefix. A sibling subdomain or a
 plain-HTTP response on the same host can set `bytebind_session` or
 `bytebind_state` with `Domain=` or a narrower `Path`. That shadows or overrides
@@ -288,7 +289,7 @@ depend on the Origin check, which does exist. **Recommendation:** rename the
 cookies to `__Host-bytebind_session` and `__Host-bytebind_state`. The state
 cookie would then need `Path=/`.
 
-**T-R4. Transaction replay runs with the proof request's ambient state — Medium, Open.**
+**T-R4. Transaction replay runs with the proof request's ambient state. Medium, Open.**
 `Q` covers the method, target, `Content-Type`, and body (`COVERED_HEADERS`).
 On replay, `_replay` builds the request from the stored request plus the
 *proof submission's* other headers, including its cookies and `Authorization`.
@@ -306,12 +307,12 @@ handler must authorize from the stored request plus the grant, never from
 ambient headers. Either strip ambient credentials at replay or extend the
 covered headers.
 
-**T-R5. At-most-once execution — Mitigated.** The ceremony row is deleted before
+**T-R5. At-most-once execution. Mitigated.** The ceremony row is deleted before
 redemption, and the grant's `operation` must match the route that the stored
 target resolves to. A transient Authority failure after the claim loses the
 request: it fails closed, and the client must start over.
 
-**T-R6. Origin derived from `Host` when unset — Low, Open.** Without
+**T-R6. Origin derived from `Host` when unset. Low, Open.** Without
 `BYTEBIND_ORIGIN`, `Core.rp_for` builds an RP from `request.base_url`. Any
 `Host` header produces a matching "origin" for the RP's own Origin checks.
 Attestation still fails, because the Authority uses the registered origin.
@@ -320,7 +321,7 @@ Requests with new hosts beyond the 32-entry cache create a fresh
 refuse a `Host` that doesn't match one. The demo already uses
 `TrustedHostMiddleware`.
 
-**T-R7. Rate limiting keyed by the wrong address — Medium (deployment), Partial.**
+**T-R7. Rate limiting keyed by the wrong address. Medium (deployment), Partial.**
 `challenge_per_minute` is keyed by `request.client.host` (FastAPI) or
 `remote_addr` (Flask). Behind a proxy that isn't configured to pass the real
 client address, every user shares one 30-per-minute bucket. With a
@@ -330,25 +331,24 @@ next to `challenge_per_minute`.
 
 ### 6.6 Browser client
 
-**T-B1. Script on the RP origin gets full authority silently — High, Accepted (design).**
-Ceremonies run in the background without user interaction, and that's the point
-of the design. Any script executing on a registered origin in an authorized
+**T-B1. Script on the RP origin gets full authority silently. High, Accepted (design).**
+Ceremonies run in the background without user interaction. Any script executing on a registered origin in an authorized
 browser can therefore obtain leases *and* approve any transaction-bound request
 it builds: XSS, a compromised third-party script, a malicious extension.
 `HttpOnly` doesn't help. The transaction profile proves that *the client* sent
-the request, not that a person meant it. Other RPs aren't affected (T-P2).
+the request. It does not establish a person's intent. Other RPs aren't affected (T-P2).
 **Recommendation:** state this plainly in the README. Recommend a strict CSP and
 no third-party scripts on management origins. For destructive operations,
 layer a user-presence check such as WebAuthn on top, as SPEC.md 3 suggests.
 
-**T-B2. Unattended sessions — Medium, Accepted.** An open management tab on a
+**T-B2. Unattended sessions. Medium, Accepted.** An open management tab on a
 device that stays on the tailnet renews indefinitely, including on a locked or
 unattended machine. P5 depends on the device leaving the network or the
 policy, not on the user leaving. **Recommendation:** an optional absolute
 session cap at the RP (a maximum lifetime regardless of renewals) and
 idle detection in the renewal script.
 
-**T-B3. Browser local-network permission prompts — Availability, Open
+**T-B3. Browser local-network permission prompts. Availability, Open
 (ROADMAP).** Browsers' local-network permission rules may classify
 `100.64.0.0/10` as private and prompt the user, which breaks silent renewal.
 Users trained to accept such prompts aren't exposed further, because check 1
@@ -360,28 +360,29 @@ The API clients run the same ceremony without a browser. Without the browser's
 honest `Origin` and CORS enforcement, the protections listed under "malicious
 pages" in SPEC.md 6 don't apply to native code.
 
-**T-X1. Any code on the node can obtain grants — High (deployment), Accepted.**
-This isn't new: native malware could always do it. The client library makes it
-routine, and it encourages tagging automation hosts. Combined with T-TS3,
+**T-X1. Any code on the node can obtain grants. High (deployment), Accepted.**
+Native malware can already obtain grants from an authorized node. The client
+library makes this access routine for applications and encourages tagging
+automation hosts. Combined with T-TS3,
 authorization means "code that can send traffic from this tailnet address".
 That includes a full-read SSRF with header control: the attacker computes
 `H1` offline and needs only the POST and its response.
 **Recommendation:** give automation hosts a separate tag. Have RPs require the
 interactive tag on destructive routes. Use the transaction profile for those routes.
 
-**T-X2. The RP picks the Authority URL — Medium, Open.** The clients POST to any
+**T-X2. The RP picks the Authority URL. Medium, Open.** The clients POST to any
 HTTPS `authority` named in a challenge. Relay through the client is still
 blocked by I1 and T-P2. What a malicious or compromised RP gains is a narrow
 SSRF from the authorized node: a fixed path and body to any HTTPS host and port,
 including tailnet-internal ones. It also gets a reachability timing oracle.
 **Recommendation:** an optional `authority=` pin, checked before any private I/O.
 
-**T-X3. Transaction headers dropped — Medium, Open.** The client side of T-R4.
+**T-X3. Transaction headers dropped. Medium, Open.** The client side of T-R4.
 `headers=`, `auth=`, and `cookies=` passed to `transaction()` go out only on the
 challenge request. **Recommendation:** reject anything outside the covered
 headers and `Accept` until T-R4 is settled.
 
-**T-X4. Transport downgrade — Low, Partial.** Both clients set
+**T-X4. Transport downgrade. Low, Partial.** Both clients set
 `trust_env=False` and turn off redirects. The requests client also rejects
 `verify=False` and retrying adapters. Gaps:
 
@@ -392,18 +393,18 @@ headers and `Accept` until T-R4 is settled.
 
 **Recommendation:** add `authority_verify=`, and rename or warn on test transports.
 
-**T-X5. Ambiguous transaction outcome — Low, Partial.** Nothing is retried at
+**T-X5. Ambiguous transaction outcome. Low, Partial.** Nothing is retried at
 any layer, which is correct. But `ClientError("proof")` doesn't distinguish
 "never sent" from "sent, outcome unknown". **Recommendation:** add an
 `ambiguous` flag.
 
-**T-X6. Secrets in error reports and logs — Low, Open.** Exceptions are chained,
+**T-X6. Secrets in error reports and logs. Low, Open.** Exceptions are chained,
 so error reporters that capture frame locals (Sentry by default) can record the
 cookie jar, the `Ceremony`, and `R`. The httpx and urllib3 logs include
 transaction URLs with their query strings. **Recommendation:** document this;
 use `raise … from None` on ceremony steps.
 
-**T-X7. Client availability — Low, Open.**
+**T-X7. Client availability. Low, Open.**
 
 - A failed renewal raises instead of sending the call on a lease that's still
   valid (SPEC.md 15.2).
@@ -413,7 +414,7 @@ use `raise … from None` on ceremony steps.
 
 ### 6.8 Availability
 
-**T-AV1. Unauthenticated ceremony starts exhaust the Authority's per-RP quota — Medium, Partial.**
+**T-AV1. Unauthenticated ceremony starts exhaust the Authority's per-RP quota. Medium, Partial.**
 Each challenge holds a pending transaction for 30 s. With
 `max_pending_per_rp = 200` and 30 starts per minute per address, about 14 source
 addresses can keep an RP's quota full. Real users then can't start or renew,
@@ -423,36 +424,36 @@ the quota to the expected attack. Consider a stricter per-/24 or per-/64 limit,
 or a cheap proof of work on `/bytebind/challenge`. Track this as a known limit
 of unauthenticated access requests (SPEC.md 10.2).
 
-**T-AV2. One page can use up a device's attestation budget — Low, Open.** The
+**T-AV2. One page can use up a device's attestation budget. Low, Open.** The
 Authority's `PeerLimiter` is keyed by device address and shared across all
 RPs. A page on any registered origin that loops attestation attempts locks that
 device out of every RP for a minute. **Recommendation:** key the limiter by
 (peer, origin).
 
-**T-AV3. Tailscaled load per request — Low, Open.** Every attestation, and
+**T-AV3. Tailscaled load per request. Low, Open.** Every attestation, and
 every HTTPS control request, calls `status` (up to 4 MiB) and `whois`. On large
 tailnets this amplifies T-AV1. **Recommendation:** cache `status` briefly, or
 use `whois` alone.
 
-**T-AV4. A single Authority — Accepted.** Failover isn't defined yet (ROADMAP
+**T-AV4. A single Authority. Accepted.** Failover isn't defined yet (ROADMAP
 draft 0.8).
 
 ### 6.9 Privacy
 
-**T-PR1. The RP's code learns the device's tailnet IP — Medium, Open.**
+**T-PR1. The RP's code learns the device's tailnet IP. Medium, Open.**
 `H2` decrypts to `IP || S`, and the client does the decrypting. In a browser,
-that's JavaScript served by the RP. So every RP learns the tailnet address of
-each authorized device that visits it, even with `claims = []`, and a tailnet
+that's JavaScript served by the RP. Every RP therefore learns the tailnet
+address of each authorized device that visits it, even with `claims = []`, and a tailnet
 address identifies the node. That contradicts SPEC.md 19's
 selective-disclosure goal. **Recommendation:** document it as a limit, or
 change the transcript in a future version so the client gets a value
 derived from `IP` rather than `IP` itself.
 
-**T-PR2. The Authority logs node names — Low.** `attested … name=` and
+**T-PR2. The Authority logs node names. Low.** `attested … name=` and
 `granted … node=` are logged at INFO. That's expected for audit, but name it in
 the operations docs and set log retention to match.
 
-**T-PR3. Silent fingerprinting by registered RPs — Low, Accepted.** Background
+**T-PR3. Silent fingerprinting by registered RPs. Low, Accepted.** Background
 ceremonies tell an RP whether a visitor's device is authorized for it, without
 any user action. This is limited to RPs the operator registered.
 
