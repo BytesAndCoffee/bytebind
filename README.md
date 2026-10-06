@@ -19,14 +19,25 @@ browser client. It targets draft 0.7 and uses Tailscale as the attestation provi
 
 ## Examples and demos
 
-- **[bytebind-explainer](docs/bytebind-explainer.mp4)** — video introduction to ByteBind (MP4).
-- **[bytebind-comments-demo](docs/bytebind-comments-demo.mp4)** — comments demo recording (MP4).
 - **[bytebind-demo](examples/demo/README.md)** — runnable FastAPI app with a public
   homepage and an admin page protected by `tag:admin`. Includes an
   [nginx config](examples/demo/nginx.conf), Authority registration instructions,
   and an optional [systemd service](examples/demo/bytebind-demo.service).
 - **[Two-profile example](examples/rp_app.py)** — manually wired FastAPI example
   demonstrating session leases and transaction-bound operations.
+
+### bytebind-explainer
+
+https://github.com/user-attachments/assets/159b0163-70aa-47ba-bb4b-00a9c3bbbed1
+
+[Download the original explainer (MP4)](docs/bytebind-explainer.mp4).
+The inline player uses a smaller copy for GitHub's attachment limit.
+
+### bytebind-comments-demo
+
+https://github.com/user-attachments/assets/37dd5628-83c6-412e-a72a-5117f13cf7f0
+
+[Download the comments demo (MP4)](docs/bytebind-comments-demo.mp4).
 
 The videos are recordings; the runnable demo is included in the Python package.
 
