@@ -6,6 +6,14 @@ Putting the interface on the tailnet would have solved it. In this case, I wante
 
 That became **ByteBind**: a browser completes an authentication exchange through both the public application and a private Authority. The Authority identifies the device making the private connection, checks whether it is allowed, and returns proof material that the browser carries back to the application.
 
+**ByteBind isn’t a nicer login screen. It’s *no login screen*.**
+
+No registration ceremony. No OIDC/OAuth ceremony. No redirects, PINs, keys, or account pickers.
+
+For the developer, it’s an import, an app bind, and route binds. For the operator, it’s a few lines of policy. For the user, it’s seamless, ambient authentication.
+
+**The developer declares what’s protected. The operator declares who’s trusted. The user just opens the page.**
+
 <video controls preload="metadata" playsinline poster="https://blog.bytes.coffee/media/bytebind-explainer-0097862c.jpg" style="width:100%;border-radius:12px" aria-label="ByteBind explainer video">
   <source src="https://blog.bytes.coffee/media/bytebind-explainer-0097862c.mp4" type="video/mp4">
   <a href="https://blog.bytes.coffee/media/bytebind-explainer-0097862c.mp4">Download the ByteBind explainer.</a>

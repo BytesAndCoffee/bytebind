@@ -1,5 +1,13 @@
 # ByteBind
 
+**ByteBind isn’t a nicer login screen. It’s *no login screen*.**
+
+No registration ceremony. No OIDC/OAuth ceremony. No redirects, PINs, keys, or account pickers.
+
+For the developer, it’s an import, an app bind, and route binds. For the operator, it’s a few lines of policy. For the user, it’s seamless, ambient authentication.
+
+**The developer declares what’s protected. The operator declares who’s trusted. The user just opens the page.**
+
 ByteBind authorizes management access to a public application through a fresh
 exchange involving an allowed private-overlay device. The browser obtains a
 challenge from the application, completes private attestation, and returns a
