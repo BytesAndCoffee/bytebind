@@ -92,7 +92,10 @@ for public-to-private requests; real deployment behavior remains a testing item.
 | `src/bytebind/tailscale.py` | The Tailscale attestation provider (LocalAPI `status` and `whois`) and policy |
 | `src/bytebind/authority.py` | The Authority: attest service, and the control channel over a Unix socket or tailnet HTTPS |
 | `src/bytebind/config.py` | Authority configuration (TOML), validated at startup |
-| `src/bytebind/fastapi.py` | FastAPI adapter: route protection, lease dependencies, mounted endpoints, and browser injection |
+| `src/bytebind/binding.py` | What the web bindings share: requirements, stored requests, the renewal script, RP configuration |
+| `src/bytebind/fastapi.py` | FastAPI binding: route protection, leases and transaction grants, mounted endpoints, and browser injection |
+| `src/bytebind/flask.py` | Flask binding, with the same API |
+| `src/bytebind/limits.py` | Rate limiting and capped body reads |
 | `src/bytebind/discovery.py` | Authority discovery through tailnet tags and node capabilities |
 | `src/bytebind/demo.py` | The packaged `bytebind-demo` app and launcher |
 | `src/bytebind/rp.py` | Relying-party side: `AuthorityClient` and `RelyingParty` (state cookies, leases, stored requests) |
@@ -218,6 +221,38 @@ renewal script is injected only into protected HTML responses; public pages
 never contact the Authority. Injection buffers uncompressed HTML responses and
 uses inline JavaScript, so streaming HTML and strict CSP deployments should
 account for that behavior.
+
+### Flask
+
+The Flask binding has the same shape. Install it with `pip install "bytebind[flask]"`:
+
+```python
+from flask import Flask, request
+from bytebind.flask import ByteBind
+
+app = Flask(__name__)
+bind = ByteBind(app)
+
+@app.get("/admin")
+@bind(require=["tag:admin"])
+def admin(lease=bind.lease):
+    return {"device_id": lease.device_id}
+
+@app.post("/restart")
+@bind(require=["tag:admin"], grant=bind.TRANSACTION)
+def restart(grant=bind.grant):
+    return {"restarted": request.get_json()["service"], "approved_by": grant.device_id}
+```
+
+Parameters whose default is `bind.lease` or `bind.grant` are filled in when the
+view runs. It takes the same keyword arguments and environment variables, mounts
+the same paths, and serves the same sign-in page and renewal script. Behind a
+reverse proxy, wrap the app in Werkzeug's `ProxyFix` so the client address and
+origin come from the proxy. The transaction digest covers the target as sent,
+read from `REQUEST_URI` or `RAW_URI` (Werkzeug's server and gunicorn set these);
+other servers fall back to re-encoding `PATH_INFO`.
+
+### Lower-level API
 
 The lower-level API remains available:
 

@@ -2,10 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import inspect
-import os
-from dataclasses import dataclass
 from functools import wraps
 from importlib.resources import files
 from urllib.parse import unquote
@@ -14,25 +11,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from .discovery import AUTHORITY_TAG, AUTHORITY_CAPABILITY, DiscoveringAuthorityClient
-from .limits import PeerLimiter
-from .protocol import request_digest
+from . import binding as b
+from .binding import COVERED_HEADERS, GRANT_KEY, SESSION_COOKIE, STATE_COOKIE, Grant  # noqa: F401 (re-exported)
+from .discovery import AUTHORITY_TAG, AUTHORITY_CAPABILITY
 from .tailscale import Directory
-from .rp import AuthorityClient, AuthorityError, CeremonyError, Lease, RelyingParty
+from .rp import AuthorityError, CeremonyError, Lease, RelyingParty
 
-STATE_COOKIE = "bytebind_state"
-SESSION_COOKIE = "bytebind_session"
-MAX_CACHED_ORIGINS = 32
-GRANT_SCOPE_KEY = "bytebind.grant"  # set only in-process, on a replayed transaction-bound request
-COVERED_HEADERS = ("content-type",)  # the headers Q covers; the browser client sends exactly these
-
-
-@dataclass(frozen=True)
-class Grant:
-    """What a transaction-bound handler learns about the device that approved it."""
-
-    device_id: str | None
-    claims: dict
+GRANT_SCOPE_KEY = GRANT_KEY
 
 
 def request_target(request: Request) -> str:
@@ -40,12 +25,6 @@ def request_target(request: Request) -> str:
     raw = request.scope.get("raw_path") or request.url.path.encode()
     query = request.scope.get("query_string", b"")
     return raw.decode("latin-1") + ("?" + query.decode("latin-1") if query else "")
-
-
-def _meets(claims: dict, required: frozenset[str]) -> bool:
-    """Every requirement must match: ``tag:`` against device tags, anything else against ``authorization``."""
-    tags, authorization = set(claims.get("tags", [])), set(claims.get("authorization", []))
-    return all(item in (tags if item.startswith("tag:") else authorization) for item in required)
 
 
 class ByteBind:
@@ -70,8 +49,8 @@ class ByteBind:
     without a limit any client could fill the Authority's per-RP quota.
     """
 
-    LEASE = "session"
-    TRANSACTION = "tx"
+    LEASE = b.LEASE
+    TRANSACTION = b.TRANSACTION
 
     def __init__(self, app: FastAPI, *, rp: RelyingParty | None = None,
                  authority: str | None = None, origin: str | None = None,
@@ -81,18 +60,11 @@ class ByteBind:
                  authority_capability: str = AUTHORITY_CAPABILITY,
                  authority_port: int = 9443, challenge_per_minute: int = 30,
                  max_transaction_body: int = 16 * 1024):
-        self.rp = rp
-        self._rps: dict[str, RelyingParty] = {}
-        self._challenge_limiter = PeerLimiter(challenge_per_minute)
-        self.max_transaction_body = max_transaction_body
-        self.authority = authority or os.getenv("BYTEBIND_AUTHORITY")
-        self._authority_client = (AuthorityClient(self.authority) if self.authority else
-                                  DiscoveringAuthorityClient(directory,
-                                      socket_path=tailscale_socket or os.getenv("BYTEBIND_TAILSCALE_SOCKET", "/var/run/tailscale/tailscaled.sock"),
-                                      tag=authority_tag, capability=authority_capability, port=authority_port))
-        self.origin = origin or os.getenv("BYTEBIND_ORIGIN")
-        self.audience = audience or os.getenv("BYTEBIND_AUDIENCE", "manage")
-        self.database = database or os.getenv("BYTEBIND_RP_DB", "bytebind-rp.sqlite3")
+        self.core = b.Core(rp=rp, authority=authority, origin=origin, audience=audience, database=database,
+                           directory=directory, tailscale_socket=tailscale_socket, authority_tag=authority_tag,
+                           authority_capability=authority_capability, authority_port=authority_port,
+                           challenge_per_minute=challenge_per_minute, max_transaction_body=max_transaction_body)
+
         def current_lease(request: Request) -> Lease:
             request.state.bytebind_protected = True
             lease = self._rp(request).session(request.cookies.get(SESSION_COOKIE))
@@ -104,7 +76,7 @@ class ByteBind:
         # Resolved before the binding decides to answer with a challenge, so it is None on
         # that first call; a transaction-bound handler itself only ever runs with a grant.
         def current_grant(request: Request) -> Grant | None:
-            grant = request.scope.get(GRANT_SCOPE_KEY)
+            grant = request.scope.get(GRANT_KEY)
             return Grant(grant["claims"].get("device_id"), grant["claims"]) if grant else None
         self.grant = Depends(current_grant)
         app.state.bytebind = self
@@ -125,7 +97,7 @@ class ByteBind:
             except (AuthorityError, OSError):
                 return self._failed(503)
             response = JSONResponse(issued, headers={"Cache-Control": "no-store"})
-            self._cookie(response, STATE_COOKIE, state, "/bytebind/", 60)
+            self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 60)
             return response
 
         @app.post("/bytebind/proof", include_in_schema=False)
@@ -144,7 +116,7 @@ class ByteBind:
             else:
                 response = JSONResponse({"device_id": done.lease.device_id}, headers={"Cache-Control": "no-store"})
                 self._cookie(response, SESSION_COOKIE, done.session_token, "/")
-            response.delete_cookie(STATE_COOKIE, path="/bytebind/", secure=True, httponly=True, samesite="strict")
+            response.delete_cookie(STATE_COOKIE, path=b.STATE_PATH, secure=True, httponly=True, samesite="strict")
             return response
 
         @app.post("/bytebind/logout", include_in_schema=False)
@@ -165,15 +137,11 @@ class ByteBind:
             if protected:
                 response.headers["Cache-Control"] = "no-store"
             if response.headers.get("X-ByteBind-Required") and "text/html" in request.headers.get("accept", "") and request.method == "GET":
-                return HTMLResponse('<!doctype html><title>ByteBind</title><p id="bytebind-status">Connecting…</p>' + self._script(True),
-                                    status_code=401, headers={"Cache-Control": "no-store"})
+                return HTMLResponse(b.sign_in_page(), status_code=401, headers={"Cache-Control": "no-store"})
             # Renewal runs only on protected pages: public pages must not start ceremonies
             # or make visitors' browsers contact the private Authority.
             if protected and "text/html" in response.headers.get("content-type", "") and not response.headers.get("content-encoding"):
-                body = b"".join([chunk async for chunk in response.body_iterator])
-                script = self._script(False).encode()
-                index = body.lower().rfind(b"</body>")
-                body = body[:index] + script + body[index:] if index >= 0 else body + script
+                body = b.inject_renewal(b"".join([chunk async for chunk in response.body_iterator]))
                 result = Response(body, status_code=response.status_code, background=response.background)
                 result.raw_headers = [(key, value) for key, value in response.raw_headers
                                       if key.lower() not in (b"content-length", b"cache-control")]
@@ -184,20 +152,19 @@ class ByteBind:
                 response.headers["Cache-Control"] = "no-store"
             return response
 
+    # Configuration lives on the shared core; these keep the binding's attributes readable.
+    rp = property(lambda self: self.core.rp, lambda self, value: setattr(self.core, "rp", value))
+    authority = property(lambda self: self.core.authority)
+    origin = property(lambda self: self.core.origin)
+    audience = property(lambda self: self.core.audience)
+    database = property(lambda self: self.core.database)
+    _authority_client = property(lambda self: self.core.authority_client)
+
     def _rp(self, request: Request) -> RelyingParty:
-        if self.rp is not None:
-            return self.rp
-        # Never pin an origin from the first incoming request: cache one RP per origin.
-        origin = self.origin or str(request.base_url).rstrip("/")
-        rp = self._rps.get(origin)
-        if rp is None:
-            rp = RelyingParty(self._authority_client, origin=origin, audience=self.audience, database=self.database)
-            if len(self._rps) < MAX_CACHED_ORIGINS:
-                self._rps[origin] = rp
-        return rp
+        return self.core.rp_for(str(request.base_url).rstrip("/"))
 
     def _allow_challenge(self, request: Request) -> bool:
-        return self._challenge_limiter.allow(request.client.host if request.client else "")
+        return self.core.allow_challenge(request.client.host if request.client else "")
 
     @staticmethod
     def _rate_limited():
@@ -208,26 +175,21 @@ class ByteBind:
         """The access request of a transaction-bound operation: store it, bind it by Q, run nothing."""
         if not self._allow_challenge(request):
             return self._rate_limited()
-        declared = request.headers.get("content-length", "0")
-        if not declared.isdigit() or int(declared) > self.max_transaction_body:
+        if not self.core.body_fits(request.headers.get("content-length", "0")):
             return self._failed(413)
         body = await request.body()
-        if len(body) > self.max_transaction_body:
+        if not self.core.body_fits(None, body):
             return self._failed(413)
-        target = request_target(request)
-        headers = {name: request.headers.get(name, "") for name in COVERED_HEADERS}
-        q = request_digest(request.method, target, headers, body)
-        stored = {"operation": operation, "method": request.method, "target": target, "headers": headers,
-                  "body": base64.b64encode(body).decode("ascii")}
         try:
-            issued, state = await run_in_threadpool(self._rp(request).challenge, request.headers.get("origin"),
-                                                    request=stored, q=q)
+            issued, state = await run_in_threadpool(
+                self.core.challenge_transaction, self._rp(request), request.headers.get("origin"), operation,
+                request.method, request_target(request), request.headers, body)
         except CeremonyError:
             return self._failed(403)
         except (AuthorityError, OSError):
             return self._failed(503)
         response = JSONResponse(issued, status_code=202, headers={"Cache-Control": "no-store"})
-        self._cookie(response, STATE_COOKIE, state, "/bytebind/", 60)
+        self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 60)
         return response
 
     async def _replay(self, request: Request, stored: dict, grant: dict) -> Response:
@@ -240,7 +202,7 @@ class ByteBind:
         headers = [(key, value) for key, value in request.scope["headers"]
                    if key not in (b"content-type", b"content-length")]
         headers += [(name.encode("latin-1"), value.encode("latin-1")) for name, value in stored["headers"].items() if value]
-        body = base64.b64decode(stored["body"])
+        body = b.stored_body(stored)
         headers.append((b"content-length", str(len(body)).encode()))
         scope = {key: value for key, value in request.scope.items()
                  if key in ("type", "asgi", "http_version", "scheme", "server", "client", "root_path", "state", "extensions")}
@@ -248,7 +210,7 @@ class ByteBind:
             scope["state"] = dict(scope["state"])  # the replay gets its own request state
         scope.update(method=stored["method"], path=unquote(path), raw_path=path.encode("latin-1"),
                      query_string=query.encode("latin-1"), headers=headers)
-        scope[GRANT_SCOPE_KEY] = {"operation": stored["operation"], "claims": grant.get("claims", {})}
+        scope[GRANT_KEY] = {"operation": stored["operation"], "claims": grant.get("claims", {})}
         delivered = False
 
         async def receive():
@@ -282,25 +244,12 @@ class ByteBind:
     def _failed(status):
         return JSONResponse({"error": "ceremony_failed"}, status_code=status, headers={"Cache-Control": "no-store"})
 
-    @staticmethod
-    def _script(reload):
-        # Renewal keeps its fixed interval after a failure (SPEC.md 15.1): a failed renewal
-        # leaves the lease to its stored deadline, and the next one can still succeed.
-        if reload:
-            done, failed = "location.reload();", ""
-        else:
-            done = failed = "setTimeout(renew,ByteBind.RENEW_INTERVAL_MS);"
-        return ('<script src="/bytebind/client.js"></script><script>'
-                'async function renew(){try{await ByteBind.session("/bytebind/challenge","/bytebind/proof");'
-                + done + '}catch(e){' + failed + 'const s=document.getElementById("bytebind-status");'
-                'if(s)s.textContent="Private network access required";}}renew();</script>')
+    _script = staticmethod(b.renewal_script)
 
     def __call__(self, *, require=(), grant=LEASE):
         if grant not in (self.LEASE, self.TRANSACTION):
             raise ValueError("grant must be bind.LEASE or bind.TRANSACTION")
-        if isinstance(require, str) or not all(isinstance(item, str) and item for item in require):
-            raise ValueError("require must be a sequence of nonempty claim strings")
-        required = frozenset(require)
+        required = b.check_requirements(require)
 
         def check_origin(request: Request) -> None:
             try:
@@ -312,7 +261,7 @@ class ByteBind:
             response.headers["Cache-Control"] = "no-store"
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 check_origin(request)
-            if not _meets(lease.claims, required):
+            if not b.meets(lease.claims, required):
                 raise HTTPException(403, "ByteBind requirements not met")
 
         def decorate(endpoint):
@@ -322,12 +271,12 @@ class ByteBind:
                 """None runs the handler (a replay with a grant); a Response is returned instead of running it."""
                 request.state.bytebind_protected = True
                 response.headers["Cache-Control"] = "no-store"
-                granted = request.scope.get(GRANT_SCOPE_KEY)
+                granted = request.scope.get(GRANT_KEY)
                 if granted is None:
                     return await self._challenge_transaction(request, operation)
                 if granted["operation"] != operation:
                     raise HTTPException(403, "grant is for another operation")
-                if not _meets(granted["claims"], required):
+                if not b.meets(granted["claims"], required):
                     raise HTTPException(403, "ByteBind requirements not met")
                 return None
 
