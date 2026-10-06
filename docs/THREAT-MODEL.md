@@ -18,19 +18,23 @@ limit of the design).
 
 ## 1. System
 
-```text
-                    public internet                               tailnet (WireGuard)
- ┌──────────────┐  HTTPS: challenge, proof, API   ┌───────────┐  control: unix socket   ┌─────────────┐
- │ Client        │ ─────────────────────────────▶ │ RP        │ ──────── or HTTPS ────▶ │ Authority   │
- │ browser page  │                                 │ (public   │  begin / redeem         │  store      │
- │ or API client │                                 │  origin)  │                         │  (SQLite)   │
- │ on device D   │ ───────── HTTPS over tailnet: POST /attestation ───────────────────▶ │             │
- └──────────────┘                                                                       └──────┬──────┘
-                                                                                               │ LocalAPI
-                                                                                       ┌───────▼──────┐
-                                                                                       │ tailscaled   │◀── control plane,
-                                                                                       │ status/whois │    tailnet policy
-                                                                                       └──────────────┘
+```mermaid
+flowchart TB
+    client["Client on device D<br/>Browser page or API client"]
+    rp["Relying party<br/>Public HTTPS origin"]
+
+    subgraph authority_host["Authority host"]
+        authority["Authority<br/>Transaction store: SQLite"]
+        tailscaled["tailscaled<br/>status / whois"]
+    end
+
+    policy["Tailscale control plane<br/>Tailnet policy"]
+
+    client -->|"Public HTTPS: challenge, proof, API"| rp
+    rp -->|"begin / redeem: local Unix socket or tailnet HTTPS"| authority
+    client -->|"Tailnet HTTPS over WireGuard: POST /attestation"| authority
+    authority -->|"LocalAPI over Unix socket"| tailscaled
+    policy -.->|"Peer identity and policy"| tailscaled
 ```
 
 Trust boundaries:
@@ -72,8 +76,32 @@ trust assumption:
 3. **The Authority host** and its database.
 4. **The RP host and all code served from the RP's origin.** A script running on
    the origin can run ceremonies silently (T-B1).
-5. **Every process on an authorized device** (T-X1). SPEC.md puts device
-   compromise out of scope, but "device" is broader than it sounds.
+5. **The authorized device** (T-X1). Compromise of that device is outside
+   SPEC.md's threat model. ByteBind authenticates its node identity and does
+   not isolate individual processes on it.
+
+Operators assign node roles through Tailscale tags, restrict who may assign
+those tags, and configure the Authority's device policy and returned claims.
+Application developers declare each protected route's required claims. ByteBind
+checks the authenticated device claims against those requirements and denies
+access when any required claim is missing.
+
+For example, a route with `require=["tag:automated"]` accepts only a device
+carrying `tag:automated`; a route with `require=["tag:interactive"]` accepts only
+a device carrying `tag:interactive`. A node carrying both tags can satisfy either
+route. Listing both tags in one route's `require` requires both, not either.
+The Authority must include `tags` in its configured grant claims; omitted tags
+cannot satisfy a tag requirement. The node must also pass the Authority's policy.
+
+These tags express operator-assigned device roles. An API client cannot fabricate
+them: the Authority obtains tags from tailscaled's authenticated peer metadata,
+not from client headers or a claimed client mode. Correctly separating node roles
+and route requirements prevents an automation-only node from using an
+interactive-only route, and vice versa, for both leases and transaction grants.
+Incorrect node tagging or missing route requirements are policy risks (T-TS1,
+T-A3, T-X1). Code using the permissions of a legitimately authorized node is a
+trust assumption, not a bypass of these checks. A role named `tag:interactive`
+does not establish human presence; SPEC.md 3 treats that as a separate requirement.
 
 ## 4. Adversaries
 
@@ -84,7 +112,7 @@ trust assumption:
 | Unauthorized tailnet peer | Reaches the attestation port; fails policy | Yes |
 | Shared-in node | Reaches the tailnet from another tailnet | Yes |
 | Other registered RP | Valid control-channel identity; its own origin is registered | Yes |
-| Co-resident process on an authorized device | Sends traffic from the device's tailnet IP | Partly (T-X1) |
+| Co-resident process on an authorized device | Uses that node's authenticated identity and permitted roles | No process isolation; authorized-device trust assumption (T-X1) |
 | Co-resident process on an RP or Authority host | Local socket and file access | Partly (T-A4, T-R1) |
 | Network attacker on the public path | TLS-protected | Yes |
 | Script running on a registered RP origin (XSS, compromised dependency, extension) | Same-origin script in an authorized browser | Not defended; consequences in T-B1 |
@@ -104,6 +132,7 @@ What ByteBind is meant to guarantee, and the threats that test each:
 | P5 | Access ends within one lease TTL after the device stops qualifying | T-R2, T-TS3 |
 | P6 | The RP learns only the claims registered for it | T-PR1 |
 | P7 | An internet client can't exhaust Authority or RP state | T-AV1 to T-AV3 |
+| P8 | A protected handler runs only when the authenticated device grant or lease satisfies every route requirement | T-TS1, T-A3, T-X1 |
 
 ## 6. Threats
 
@@ -360,15 +389,30 @@ The API clients run the same ceremony without a browser. Without the browser's
 honest `Origin` and CORS enforcement, the protections listed under "malicious
 pages" in SPEC.md 6 don't apply to native code.
 
-**T-X1. Any code on the node can obtain grants. High (deployment), Accepted.**
-Native malware can already obtain grants from an authorized node. The client
-library makes this access routine for applications and encourages tagging
-automation hosts. Combined with T-TS3,
-authorization means "code that can send traffic from this tailnet address".
-That includes a full-read SSRF with header control: the attacker computes
-`H1` offline and needs only the POST and its response.
-**Recommendation:** give automation hosts a separate tag. Have RPs require the
-interactive tag on destructive routes. Use the transaction profile for those routes.
+**T-X1. Device roles and route requirements. Accepted trust boundary; policy mistakes remain deployment risks.**
+Operators decide which nodes carry `tag:automated`, `tag:interactive`, or both.
+Developers require the corresponding claims on routes. ByteBind enforces those
+requirements using Authority-issued claims derived from authenticated Tailscale
+metadata. Changing client headers, switching between a browser and Python, or
+claiming another access mode cannot supply a missing device tag.
+
+An automation-only node is denied on an interactive-only route. A node carrying
+both tags is permitted on either route if the Authority's policy also allows it.
+Failing to require a role on a route or assigning that role to the wrong node
+weakens this separation. Missing tag claims fail closed.
+
+Any process on a legitimately authorized node can use that node's permitted
+roles. ByteBind does not attest process identity or human intent; compromise of
+an authorized device is explicitly outside SPEC.md 3's threat model. This is not
+a failure of route authorization. Delegated network paths, including a full-read
+SSRF with header control or a proxy, still need deployment review under T-TS3:
+they can expose a node's identity to callers beyond that device.
+
+**Recommendation:** restrict tag ownership, assign automation and interactive
+roles deliberately, return the needed tag claims, and require the appropriate
+role on each protected route. Use the transaction profile when approval must
+cover one exact request. Add user presence only where the application requires
+human approval.
 
 **T-X2. The RP picks the Authority URL. Medium, Open.** The clients POST to any
 HTTPS `authority` named in a challenge. Relay through the client is still
