@@ -94,7 +94,10 @@ def create_app(rp: RelyingParty | None = None) -> FastAPI:
             parsed = json.loads(body)
         except ValueError:
             return failed(400)
-        target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        # Q covers the target as sent (SPEC.md 9.2): the raw, still percent-encoded path and query.
+        query = request.scope.get("query_string", b"")
+        target = (request.scope.get("raw_path") or request.url.path.encode()).decode("latin-1") + (
+            "?" + query.decode("latin-1") if query else "")
         headers = {name: request.headers.get(name, "") for name in COVERED_HEADERS}
         q = request_digest(request.method, target, headers, body)
         try:

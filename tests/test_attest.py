@@ -178,3 +178,12 @@ def test_preflight(config, store):
 
 def test_attest_service_exposes_only_attest(config, store):
     assert {route.path for route in create_attest_app(config, FakeTailnet(), store).routes} == {"/attest"}
+
+
+def test_oversized_bodies_are_refused_before_being_read(config, store):
+    begun = store.begin("app", "manage", APP, "session", None)
+    body, _ = prove_body(begun)
+    padded = json.dumps({**body, "pad": "x" * 2048})
+    with client(config, store) as attest_client:
+        assert attest_client.post("/attest", headers=JSON, content=padded).status_code == 403
+        assert attest_client.post("/attest", headers={**JSON, "Content-Length": "-1"}, content=b"").status_code in (400, 403)

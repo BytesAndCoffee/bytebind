@@ -26,20 +26,20 @@ browser client. It targets draft 0.7 and uses Tailscale as the attestation provi
 - **[Two-profile example](examples/rp_app.py)** — manually wired FastAPI example
   demonstrating session leases and transaction-bound operations.
 
-### bytebind-explainer
+### Explainer video
 
 https://github.com/user-attachments/assets/159b0163-70aa-47ba-bb4b-00a9c3bbbed1
 
 [Download the original explainer (MP4)](docs/bytebind-explainer.mp4).
 The inline player uses a smaller copy for GitHub's attachment limit.
 
-### bytebind-comments-demo
+### Comments demo video
 
 https://github.com/user-attachments/assets/37dd5628-83c6-412e-a72a-5117f13cf7f0
 
 [Download the comments demo (MP4)](docs/bytebind-comments-demo.mp4).
 
-The videos are recordings; the runnable demo is included in the Python package.
+These are recordings. To run the demo yourself, see [bytebind-demo](examples/demo/README.md).
 
 ## Quick start
 
@@ -196,9 +196,13 @@ An unauthenticated HTML GET receives a sign-in page that completes the ceremony
 and reloads the URL; API requests receive 401, and insufficient claims receive
 403. Cookies require HTTPS. Mounted paths are `/bytebind/client.js`,
 `/bytebind/please`, `/bytebind/affirm`, and `/bytebind/logout`. State-changing
-protected requests and logout require the configured Origin. HTML injection
-buffers uncompressed HTML responses and uses inline JavaScript, so streaming
-HTML and strict CSP deployments should account for that behavior.
+protected requests and logout require the configured Origin. Ceremony starts
+are rate limited per client address (`please_per_minute=`, default 30), so
+anonymous clients cannot fill the Authority's pending quota for this RP. The
+renewal script is injected only into protected HTML responses; public pages
+never contact the Authority. Injection buffers uncompressed HTML responses and
+uses inline JavaScript, so streaming HTML and strict CSP deployments should
+account for that behavior.
 
 The lower-level API remains available:
 

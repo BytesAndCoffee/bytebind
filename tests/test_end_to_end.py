@@ -84,6 +84,27 @@ def test_affirm_needs_the_browser_bound_state_cookie(world, config, tmp_path):
     assert app.post("/bytebind/affirm", json=affirm).status_code == 401
 
 
+def test_affirm_without_the_state_cookie_does_not_cancel_the_ceremony(world):
+    app, authority, _ = world
+    who = app.post("/bytebind/please").json()
+    affirm = browser_prove(authority, who)
+    state = app.cookies.get("bytebind_state")
+    app.cookies.clear()
+    assert app.post("/bytebind/affirm", json=affirm).status_code == 401
+    app.cookies.set("bytebind_state", state, path="/bytebind/")
+    assert app.post("/bytebind/affirm", json=affirm).status_code == 200
+
+
+def test_transaction_digest_covers_the_target_as_sent(world):
+    """SPEC.md 9.2: Q covers the percent-encoded path, which the browser hashes as-is."""
+    app, authority, _ = world
+    body = b'{"service":"demo"}'
+    pleased = app.post("/re%73tart?x=%2F", content=body, headers={"Content-Type": "application/json"})
+    assert pleased.status_code == 202
+    q = p.request_digest("POST", "/re%73tart?x=%2F", {"content-type": "application/json"}, body)
+    assert app.post("/bytebind/affirm", json=browser_prove(authority, pleased.json(), "tx", q)).status_code == 200
+
+
 @pytest.mark.parametrize("origin", [None, "https://evil.example"])
 def test_rp_refuses_foreign_origins(world, origin):
     app, _, _ = world

@@ -33,6 +33,11 @@ def test_fastapi_dx(config, unix_control, tmp_path, clock):
     def page():
         return "<html><body>Hello</body></html>"
 
+    @app.get("/dashboard", response_class=HTMLResponse)
+    @bind(require=["manage:read"])
+    def dashboard():
+        return "<html><body>Private</body></html>"
+
     with TestClient(app, base_url=APP, headers={"Origin": APP}) as client, TestClient(
         create_attest_app(config, FakeTailnet(), store), base_url=ATTEST, client=(PEER, 40000)
     ) as authority:
@@ -40,9 +45,7 @@ def test_fastapi_dx(config, unix_control, tmp_path, clock):
         denied = client.get("/admin", headers={"Accept": "text/html"})
         assert denied.status_code == 401 and "location.reload()" in denied.text
         assert not calls
-        page_response = client.get("/page")
-        assert '/bytebind/client.js' in page_response.text
-        assert int(page_response.headers["content-length"]) == len(page_response.content)
+        assert client.get("/page").text == "<html><body>Hello</body></html>", "public pages never start ceremonies"
         assert client.get("/bytebind/client.js").status_code == 200
         assert client.post("/bytebind/please", headers={"Origin": "https://evil.example"}).status_code == 403
         who = client.post("/bytebind/please").json()
@@ -50,6 +53,9 @@ def test_fastapi_dx(config, unix_control, tmp_path, clock):
         assert affirmed.status_code == 200
         assert "expires" not in affirmed.json()
         assert client.get("/admin").json() == {"device": "nLaptop1CNTRL"}
+        dashboard = client.get("/dashboard")
+        assert '/bytebind/client.js' in dashboard.text and dashboard.text.endswith("</body></html>")
+        assert int(dashboard.headers["content-length"]) == len(dashboard.content)
         assert client.get("/tagged").status_code == 403
         assert calls == ["nLaptop1CNTRL"]
         assert client.post("/bytebind/logout", headers={"Origin": "https://evil.example"}).status_code == 403
@@ -136,3 +142,24 @@ def test_default_adapter_discovers_remote_authority(config, unix_control, tmp_pa
         assert client.post("/bytebind/affirm", json=browser_prove(authority, who)).status_code == 200
         assert client.get("/admin").json() == {"device": "nLaptop1CNTRL"}
         assert endpoints == ["https://authority.tail123.ts.net:9443"] * 2
+
+
+def test_ceremony_starts_are_rate_limited_per_client():
+    class RP:
+        def please(self, origin):
+            return {"cid": "c", "C": "k", "authority": ATTEST}, "state"
+
+    app = FastAPI()
+    ByteBind(app, rp=RP(), please_per_minute=2)
+    with TestClient(app, base_url=APP, headers={"Origin": APP}) as client, TestClient(
+        app, base_url=APP, headers={"Origin": APP}, client=("198.51.100.7", 1)
+    ) as elsewhere:
+        assert [client.post("/bytebind/please").status_code for _ in range(3)] == [200, 200, 429]
+        assert elsewhere.post("/bytebind/please").status_code == 200
+
+
+def test_renewal_keeps_its_interval_after_a_failure():
+    script = ByteBind._script(False)
+    failure = script[script.index("catch(e){"):]
+    assert "setTimeout(renew,ByteBind.RENEW_INTERVAL_MS)" in failure
+    assert "setTimeout" not in ByteBind._script(True), "the sign-in page reports failure instead"

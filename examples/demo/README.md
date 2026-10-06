@@ -89,7 +89,10 @@ listener, replace `tailnet_node` with `unix_uid` set to the demo process's numer
 UID. Restart the Authority listeners after changing their registration config.
 
 Your browser's device must carry `tag:admin`; the Authority must include `tags`
-in its grant claims, as shown. Merge the following into your existing tailnet
+in its grant claims, as shown. Tagging a device in Tailscale changes its
+ownership: a tagged node belongs to the tag rather than to a user, and key
+expiry is disabled by default. Consider that before tagging a personal laptop or
+phone, and prefer a dedicated admin device. Merge the following into your existing tailnet
 policy, assigning the three tags to the appropriate nodes:
 
 ```json
@@ -134,7 +137,10 @@ sudo systemctl enable --now bytebind-demo
 sudo journalctl -u bytebind-demo -n 30 --no-pager
 ```
 
-The service creates `/var/lib/bytebind-demo` for its SQLite state. If running an
+The service creates `/var/lib/bytebind-demo` for its SQLite state. The unit is
+sandboxed with a read-only view of the system (`ProtectSystem=strict`) and no
+access to home directories; keep the checkout outside `/home`, or relax
+`ProtectHome`. If running an
 Authority on the same host, register this account's UID rather than your shell
 account's UID. To use another install path, edit `WorkingDirectory` and
 `ExecStart` in the unit.

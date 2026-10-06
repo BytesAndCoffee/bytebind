@@ -11,11 +11,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from .discovery import AUTHORITY_TAG, AUTHORITY_CAPABILITY, DiscoveringAuthorityClient
+from .limits import PeerLimiter
 from .tailscale import Directory
 from .rp import AuthorityClient, AuthorityError, CeremonyError, Lease, RelyingParty
 
 STATE_COOKIE = "bytebind_state"
 SESSION_COOKIE = "bytebind_session"
+MAX_CACHED_ORIGINS = 32
 
 
 class ByteBind:
@@ -27,6 +29,10 @@ class ByteBind:
     A local /run/bytebind/control.sock listener takes precedence. Without a configured
     origin the application's request URL supplies it; deploy behind trusted host
     and proxy configuration. An existing RelyingParty can be passed as ``rp``.
+
+    ``please_per_minute`` limits ceremony starts per client address. PLEASE is
+    unauthenticated and each one holds a pending slot at the Authority, so
+    without a limit any client could fill the Authority's per-RP quota.
     """
 
     LEASE = "session"
@@ -37,8 +43,10 @@ class ByteBind:
                  directory: Directory | None = None, tailscale_socket: str | None = None,
                  authority_tag: str = AUTHORITY_TAG,
                  authority_capability: str = AUTHORITY_CAPABILITY,
-                 authority_port: int = 9443):
+                 authority_port: int = 9443, please_per_minute: int = 30):
         self.rp = rp
+        self._rps: dict[str, RelyingParty] = {}
+        self._please_limiter = PeerLimiter(please_per_minute)
         self.authority = authority or os.getenv("BYTEBIND_AUTHORITY")
         self._authority_client = (AuthorityClient(self.authority) if self.authority else
                                   DiscoveringAuthorityClient(directory,
@@ -47,8 +55,6 @@ class ByteBind:
         self.origin = origin or os.getenv("BYTEBIND_ORIGIN")
         self.audience = audience or os.getenv("BYTEBIND_AUDIENCE", "manage")
         self.database = database or os.getenv("BYTEBIND_RP_DB", "bytebind-rp.sqlite3")
-        # Each request constructs a lightweight RP using the same persistent store.
-        # Never pin an origin from the first incoming request.
         def current_lease(request: Request) -> Lease:
             request.state.bytebind_protected = True
             lease = self._rp(request).session(request.cookies.get(SESSION_COOKIE))
@@ -65,6 +71,9 @@ class ByteBind:
 
         @app.post("/bytebind/please", include_in_schema=False)
         def please(request: Request):
+            if not self._please_limiter.allow(request.client.host if request.client else ""):
+                return JSONResponse({"error": "rate_limited"}, status_code=429,
+                                    headers={"Cache-Control": "no-store", "Retry-After": "60"})
             try:
                 who, state = self._rp(request).please(request.headers.get("origin"))
             except CeremonyError:
@@ -105,12 +114,15 @@ class ByteBind:
         @app.middleware("http")
         async def browser_client(request: Request, call_next):
             response = await call_next(request)
-            if getattr(request.state, "bytebind_protected", False):
+            protected = getattr(request.state, "bytebind_protected", False)
+            if protected:
                 response.headers["Cache-Control"] = "no-store"
             if response.headers.get("X-ByteBind-Required") and "text/html" in request.headers.get("accept", "") and request.method == "GET":
                 return HTMLResponse('<!doctype html><title>ByteBind</title><p id="bytebind-status">Connecting…</p>' + self._script(True),
                                     status_code=401, headers={"Cache-Control": "no-store"})
-            if "text/html" in response.headers.get("content-type", "") and not response.headers.get("content-encoding"):
+            # Renewal runs only on protected pages: public pages must not start ceremonies
+            # or make visitors' browsers contact the private Authority.
+            if protected and "text/html" in response.headers.get("content-type", "") and not response.headers.get("content-encoding"):
                 body = b"".join([chunk async for chunk in response.body_iterator])
                 script = self._script(False).encode()
                 index = body.lower().rfind(b"</body>")
@@ -126,9 +138,16 @@ class ByteBind:
             return response
 
     def _rp(self, request: Request) -> RelyingParty:
-        return self.rp or RelyingParty(self._authority_client,
-                                      origin=self.origin or str(request.base_url).rstrip("/"),
-                                      audience=self.audience, database=self.database)
+        if self.rp is not None:
+            return self.rp
+        # Never pin an origin from the first incoming request: cache one RP per origin.
+        origin = self.origin or str(request.base_url).rstrip("/")
+        rp = self._rps.get(origin)
+        if rp is None:
+            rp = RelyingParty(self._authority_client, origin=origin, audience=self.audience, database=self.database)
+            if len(self._rps) < MAX_CACHED_ORIGINS:
+                self._rps[origin] = rp
+        return rp
 
     @staticmethod
     def _cookie(response, name, value, path, max_age=None):
@@ -140,10 +159,16 @@ class ByteBind:
 
     @staticmethod
     def _script(reload):
-        action = "location.reload();" if reload else "setTimeout(renew, ByteBind.RENEW_INTERVAL_MS);"
+        # Renewal keeps its fixed interval after a failure (SPEC.md 15.1): a failed renewal
+        # leaves the lease to its stored deadline, and the next one can still succeed.
+        if reload:
+            done, failed = "location.reload();", ""
+        else:
+            done = failed = "setTimeout(renew,ByteBind.RENEW_INTERVAL_MS);"
         return ('<script src="/bytebind/client.js"></script><script>'
                 'async function renew(){try{await ByteBind.session("/bytebind/please","/bytebind/affirm");'
-                + action + '}catch(e){const s=document.getElementById("bytebind-status");if(s)s.textContent="Private network access required";}}renew();</script>')
+                + done + '}catch(e){' + failed + 'const s=document.getElementById("bytebind-status");'
+                'if(s)s.textContent="Private network access required";}}renew();</script>')
 
     def __call__(self, *, require=(), grant=LEASE):
         if grant != self.LEASE:

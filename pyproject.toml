@@ -23,6 +23,10 @@ dev = ["httpx>=0.28", "pytest>=8"]
 bytebind-authority = "bytebind.authority:main"
 bytebind-demo = "bytebind.demo:main"
 
+[tool.hatch.build.targets.sdist]
+# The demo videos and PDF are tens of megabytes; keep them out of the source distribution.
+exclude = ["docs/*.mp4", "docs/*.pdf"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/bytebind"]
 

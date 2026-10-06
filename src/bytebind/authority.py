@@ -21,7 +21,6 @@ import socketserver
 import stat
 import struct
 import sys
-import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -32,33 +31,13 @@ from fastapi.responses import JSONResponse, Response
 
 from . import protocol as p
 from .config import AuthorityConfig, RelyingParty, load
+from .limits import PeerLimiter, read_capped
 from .store import Attestation, TransactionError, TransactionStore
 from .tailscale import AttestationError, Directory, LocalAPI, authorize, identify, is_tailscale_address
 
 logger = logging.getLogger("bytebind.authority")
 MAX_ATTEST_BODY = 1024
 MAX_CONTROL_BODY = 4096
-
-
-class PeerLimiter:
-    """A sliding one-minute window per key."""
-
-    def __init__(self, per_minute: int = 30, now: Callable[[], float] = time.monotonic):
-        self.per_minute, self.now = per_minute, now
-        self.hits: dict[str, list[float]] = {}
-        self.lock = threading.Lock()
-
-    def allow(self, key: str) -> bool:
-        now = self.now()
-        with self.lock:
-            if len(self.hits) > 10_000:
-                self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < 60}
-            hits = [hit for hit in self.hits.get(key, ()) if now - hit < 60]
-            allowed = len(hits) < self.per_minute
-            if allowed:
-                hits.append(now)
-            self.hits[key] = hits
-            return allowed
 
 
 def open_store(config: AuthorityConfig, now: Callable[[], float] = time.time) -> TransactionStore:
@@ -139,8 +118,8 @@ def create_attest_app(config: AuthorityConfig, directory: Directory | None = Non
             return JSONResponse({"error": "rate_limited"}, 429, headers=cors(origin) | {"Retry-After": "60"})
         if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":  # check 2
             return refused(origin=origin)
-        raw = await request.body()
-        if len(raw) > MAX_ATTEST_BODY:
+        raw = await read_capped(request, MAX_ATTEST_BODY)
+        if raw is None:
             return refused(origin=origin)
         try:
             h2 = attest(config, store, directory, peer, origin, json.loads(raw))
@@ -250,6 +229,7 @@ def unix_control_server(config: AuthorityConfig, store: TransactionStore, path: 
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = "bytebind"
         sys_version = ""
+        timeout = 10  # a stalled client must not hold a handler thread
 
         def log_message(self, format: str, *args) -> None:
             logger.debug("control: " + format, *args)
@@ -267,7 +247,10 @@ def unix_control_server(config: AuthorityConfig, store: TransactionStore, path: 
             if rp is None:
                 logger.warning("control refused: uid is not a registered RP")
                 return self.reply(403, {"error": "unknown_rp"})
-            length = int(self.headers.get("Content-Length") or 0)
+            declared = self.headers.get("Content-Length") or "0"
+            if not declared.isdigit():
+                return self.reply(400, {"error": "malformed"})
+            length = int(declared)
             if length > MAX_CONTROL_BODY:
                 return self.reply(413, {"error": "too_large"})
             try:
@@ -310,8 +293,11 @@ def create_control_app(config: AuthorityConfig, directory: Directory | None = No
             return JSONResponse({"error": "unavailable"}, 503)
         if rp is None:
             return JSONResponse({"error": "unknown_rp"}, 403)
+        raw = await read_capped(request, MAX_CONTROL_BODY)
+        if raw is None:
+            return JSONResponse({"error": "too_large"}, 413)
         try:
-            return JSONResponse(control.handle(rp, f"/v1/{action}", await request.body()))
+            return JSONResponse(control.handle(rp, f"/v1/{action}", raw))
         except ControlError as exc:
             return JSONResponse({"error": exc.code}, exc.status)
 

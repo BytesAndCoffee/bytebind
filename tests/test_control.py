@@ -180,3 +180,13 @@ def test_control_client_refuses_nonconforming_transports():
     for endpoint in ("http://authority:80", "tcp://127.0.0.1:9000", "unix:relative.sock", "https://a.ts.net/path"):
         with pytest.raises(ValueError):
             AuthorityClient(endpoint)
+
+
+@pytest.mark.parametrize("length", ["-1", "abc"])
+def test_unix_control_refuses_malformed_content_length(unix_control, length):
+    path, _ = unix_control
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(5)
+        connection.connect(path)
+        connection.sendall(f"POST /v1/begin HTTP/1.1\r\nHost: x\r\nContent-Length: {length}\r\n\r\n".encode())
+        assert connection.recv(64).startswith(b"HTTP/1.0 400")

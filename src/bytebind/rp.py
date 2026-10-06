@@ -192,15 +192,18 @@ class RelyingParty:
             raise CeremonyError("malformed AFFIRM")
         cid = body["cid"]
         with closing(self._connect()) as connection:
-            # Claim the ceremony atomically: a retried AFFIRM can never execute twice.
             row = connection.execute("SELECT state_hash, profile, request, expires_at FROM ceremonies WHERE cid = ?", (cid,)).fetchone()
-            if row is None or connection.execute("DELETE FROM ceremonies WHERE cid = ?", (cid,)).rowcount != 1:
+            if row is None:
                 raise CeremonyError("unknown or already affirmed ceremony")
-        state_hash, profile, request, expires_at = row
+            state_hash, profile, request, expires_at = row
+            # Check the state cookie before claiming: a caller without it cannot cancel someone else's ceremony.
+            if not state or not hmac.compare_digest(_digest(state), state_hash):
+                raise CeremonyError("state cookie does not match")
+            # Claim the ceremony atomically: a retried AFFIRM can never execute twice.
+            if connection.execute("DELETE FROM ceremonies WHERE cid = ? AND state_hash = ?", (cid, state_hash)).rowcount != 1:
+                raise CeremonyError("unknown or already affirmed ceremony")
         if expires_at < self.now():
             raise CeremonyError("ceremony expired")
-        if not state or not hmac.compare_digest(_digest(state), state_hash):
-            raise CeremonyError("state cookie does not match")
         try:
             grant = self.authority.redeem(cid, body["R"], self.audience)
         except AuthorityError as exc:
