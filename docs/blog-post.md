@@ -55,6 +55,18 @@ An authorized device is a trust assumption. Compromising it, stealing the ceremo
 
 The intended experience is to open the management page and let the exchange happen in the background. Browser permission rules for public pages accessing private addresses may introduce a prompt; testing that behavior on a real tailnet remains on the roadmap.
 
+## How ByteBind differs from OIDC, and where tsidp fits
+
+OpenID Connect gives applications a standard way to accept identity from a trusted provider. In the familiar authorization-code flow, the browser visits that provider, the application exchanges a code, and an ID token communicates the authentication result. OIDC itself doesn’t require passwords or a visible login screen. [OpenID Connect specification](https://openid.net/specs/openid-connect-core-1_0.html).
+
+ByteBind addresses a narrower requirement: a public application needs fresh participation through an authorized private-network device before granting management access. Its native exchange happens in the background, without an OIDC redirect. The result authorizes a short lease or one specific request. It establishes device participation; identifying the person using that device requires an additional mechanism.
+
+[tsidp](https://tailscale.com/docs/features/tsidp) turns Tailscale identity into standard OIDC/OAuth credentials for applications that already support those protocols. It can eliminate authentication prompts too. Its value is compatibility with existing applications and their identity integrations.
+
+ByteBind’s focus is direct route protection, repeated private-network attestation, and transaction-bound authorization in applications adopting its bindings. Both aim to let users open an application without entering another password, but the integration and authorization model differ.
+
+An application could use tsidp for its user identity and require ByteBind for a privileged operation. The ByteBind draft also describes an optional OIDC bridge, though the reference implementation does not implement it. Neither arrangement implies an existing tsidp–ByteBind integration.
+
 ## From TailBind to ByteBind
 
 The early drafts were called **TailBind** because the first provider was Tailscale. The protocol's actual dependency is broader: an authenticated private path, a reliable mapping from the connection to a device, and an authorization policy.
