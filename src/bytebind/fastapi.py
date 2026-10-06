@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from functools import wraps
 from importlib.resources import files
 from urllib.parse import unquote
@@ -10,6 +11,9 @@ from urllib.parse import unquote
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
+from starlette.routing import Match
+
+from .limits import read_capped
 
 from . import binding as b
 from .binding import COVERED_HEADERS, GRANT_KEY, SESSION_COOKIE, STATE_COOKIE, Grant  # noqa: F401 (re-exported)
@@ -103,7 +107,10 @@ class ByteBind:
         @app.post("/bytebind/proof", include_in_schema=False)
         async def proof(request: Request):
             try:
-                body = await request.json()
+                raw = await read_capped(request, b.MAX_PROOF_BODY)
+                if raw is None:
+                    return self._failed(413)
+                body = json.loads(raw)
                 done = await run_in_threadpool(self._rp(request).accept_proof, request.headers.get("origin"),
                                               body, request.cookies.get(STATE_COOKIE),
                                               request.cookies.get(SESSION_COOKIE))
@@ -132,6 +139,19 @@ class ByteBind:
 
         @app.middleware("http")
         async def browser_client(request: Request, call_next):
+            # FastAPI parses model bodies before resolving dependencies. Bound the
+            # input here, before parsing, for the first matching transaction route.
+            for route in app.router.routes:
+                match, _ = route.matches(request.scope)
+                if match == Match.FULL:
+                    if getattr(getattr(route, "endpoint", None), "__bytebind_transaction__", False):
+                        body = await read_capped(request, self.core.max_transaction_body)
+                        if body is None:
+                            return self._failed(413)
+                        # Starlette's cached middleware request replays this body to
+                        # downstream parsing without reading the stream a second time.
+                        request._body = body
+                    break
             response = await call_next(request)
             protected = getattr(request.state, "bytebind_protected", False)
             if protected:
@@ -177,8 +197,8 @@ class ByteBind:
             return self._rate_limited()
         if not self.core.body_fits(request.headers.get("content-length", "0")):
             return self._failed(413)
-        body = await request.body()
-        if not self.core.body_fits(None, body):
+        body = await read_capped(request, self.core.max_transaction_body)
+        if body is None:
             return self._failed(413)
         try:
             issued, state = await run_in_threadpool(
@@ -299,6 +319,7 @@ class ByteBind:
                     return await endpoint(*args, **kwargs)
                 return await run_in_threadpool(endpoint, *args, **kwargs)
 
+            protected.__bytebind_transaction__ = grant == self.TRANSACTION
             protected.__signature__ = signature.replace(parameters=parameters)
             return protected
         return decorate

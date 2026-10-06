@@ -8,7 +8,7 @@ from .rp import AuthorityClient
 from .tailscale import Directory, LocalAPI, is_tailscale_address
 
 AUTHORITY_TAG = "tag:bytebind-authority"
-AUTHORITY_CAPABILITY = "bytes.coffee/bytebind/authority"
+AUTHORITY_CAPABILITY = "bytebind.example/authority"
 LOCAL_CONTROL_SOCKET = "/run/bytebind/control.sock"
 
 

@@ -1,0 +1,24 @@
+--- a/tailnet-policy.hujson
++++ b/tailnet-policy.hujson
+@@ -1,4 +1,19 @@
+ {
+-  "tagOwners": {},
+-  "grants": []
++  "tagOwners": {
++    "tag:bytebind-authority": ["autogroup:admin"],
++    "tag:rp": ["autogroup:admin"],
++    "tag:admin": ["autogroup:admin"]
++  },
++  "grants": [
++    {
++      "src": ["tag:rp"],
++      "dst": ["tag:bytebind-authority"],
++      "ip": ["tcp:9443"]
++    },
++    {
++      "src": ["tag:admin"],
++      "dst": ["tag:bytebind-authority"],
++      "ip": ["tcp:8443"]
++    }
++  ]
+ }

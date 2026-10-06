@@ -33,6 +33,8 @@ browser client. It targets draft 0.7 and uses Tailscale as the attestation provi
   and an optional [systemd service](examples/demo/bytebind-demo.service).
 - **[Two-profile example](examples/rp_app.py)** — FastAPI app using the binding for
   both a session lease and a transaction-bound operation.
+- **[Python API client example](examples/client/README.md)** — session and
+  transaction calls against the two-profile app.
 
 ### Explainer video
 
@@ -107,6 +109,8 @@ for public-to-private requests; real deployment behavior remains a testing item.
 | `src/bytebind/discovery.py` | Authority discovery through tailnet tags and node capabilities |
 | `src/bytebind/demo.py` | The packaged `bytebind-demo` app and launcher |
 | `src/bytebind/rp.py` | Relying-party side: `AuthorityClient` and `RelyingParty` (state cookies, leases, stored requests) |
+| `src/bytebind/client.py` | HTTPX API client for session leases and transaction-bound operations |
+| `src/bytebind/requests.py` | Requests Session with the same ceremony and both profiles |
 | `src/bytebind/web/bytebind.js` | The browser client (WebCrypto only) |
 | `examples/` | Relying-party examples, Authority configuration, and nginx/systemd demo setup |
 | `scripts/make_vectors.py` | Regenerates the test vectors |
@@ -166,12 +170,14 @@ is redeemed at `/bytebind/proof`, the stored request is replayed through the app
 and the handler runs exactly once; its response is the proof submission's
 response. The approval covers the method, the target as sent, the
 `Content-Type` header, and the body (`max_transaction_body=`, default 16 KiB).
+FastAPI bounds transaction bodies before model parsing; both bindings cap proof
+submissions at 1 KiB and reject oversized inputs with 413.
 Call it from the browser with `ByteBind.transaction(url, { body }, "/bytebind/proof")`.
 
 No Authority address is needed: the adapter prefers an existing local
 `/run/bytebind/control.sock`, otherwise discovers a single online tailnet node
 with `tag:bytebind-authority` or the node capability
-`bytes.coffee/bytebind/authority`. Tag-only discovery uses its MagicDNS name and
+`bytebind.example/authority`. Tag-only discovery uses its MagicDNS name and
 HTTPS port 9443. TLS certificate verification remains enabled. Shared, expired,
 and offline nodes are excluded; zero or multiple matches fail closed with 503.
 Discovery runs at each transaction creation and redemption, with no automatic replay or failover.
@@ -195,10 +201,14 @@ tailnet policy:
 "nodeAttrs": [{
   "target": ["tag:bytebind-authority"],
   "app": {
-    "bytes.coffee/bytebind/authority": [{"port": 9443, "audiences": ["manage"]}]
+    "bytebind.example/authority": [{"port": 9443, "audiences": ["manage"]}]
   }
 }]
 ```
+
+The key `bytebind.example/authority` is a capability identifier in the reserved
+`.example` namespace, not a URL to visit. To use your own namespace, set
+`authority_capability=` to the same key used in your policy.
 
 This is a ByteBind-defined **node capability**, describing the Authority itself,
 rather than an application grant to callers. An omitted `audiences` field matches
@@ -259,6 +269,91 @@ reverse proxy, wrap the app in Werkzeug's `ProxyFix` so the client address and
 origin come from the proxy. The transaction digest covers the target as sent,
 read from `REQUEST_URI` or `RAW_URI` (Werkzeug's server and gunicorn set these);
 other servers fall back to re-encoding `PATH_INFO`.
+
+### Python API client
+
+Install the optional HTTP client with `pip install "bytebind[client]"`. Run it on
+an authorized tailnet device that can reach both the public app and the private
+Authority:
+
+```python
+from bytebind.client import Client
+
+with Client("https://app.example.com") as api:
+    response = api.get("/status")
+    response.raise_for_status()
+    print(response.json())
+
+    result = api.transaction("/restart", json={"service": "demo"})
+    result.raise_for_status()
+    print(result.json())
+```
+
+`get()`, `post()`, and `request()` establish a session before the first call and
+renew before the next call once 60 seconds have elapsed. Idle clients run no
+background renewals. `authenticate()` explicitly establishes or renews a lease;
+`logout()` ends it. `transaction()` works independently of a session and covers
+the exact prepared method, percent-encoded target, Content-Type, and body.
+Responses are ordinary HTTPX responses; call `raise_for_status()` to check the
+application result. Ceremony failures raise `bytebind.client.ClientError` with
+`step` and `status` (absent for network or protocol failures).
+
+The client sends the app's Origin header and maintains its state/session cookies.
+Attestation uses a separate connection without application cookies or credentials.
+TLS verification stays enabled; environment proxies are ignored. URLs must remain
+on the configured public HTTPS origin. Redirects are not followed, and API calls
+and proofs are never automatically retried, including on a 401 or lost response.
+An operation may have executed before its response was lost; use the application's
+recovery or idempotency mechanism before issuing another transaction. Calls on one
+client are serialized because ceremony state uses a single cookie.
+
+Custom endpoint paths can be supplied as `challenge_path=`, `proof_path=`, and
+`logout_path=`. The client uses the Authority URL in the app's challenge, so it
+needs no LocalAPI access or separate Authority discovery configuration. Its device
+must satisfy the Authority's policy and have network access to the attestation port.
+
+### Requests compatibility
+
+Install `pip install "bytebind[requests]"` (or `pip install '.[requests]'` from a
+checkout) to use the Requests backend without installing HTTPX:
+
+```python
+from bytebind.requests import Session
+
+with Session("https://app.example.com") as api:
+    response = api.get("/status", timeout=5)
+    response.raise_for_status()
+    print(response.json())
+
+    result = api.transaction("/restart", json={"service": "demo"})
+    result.raise_for_status()
+    print(result.json())
+
+    api.logout()
+```
+
+`Session` subclasses `requests.Session`. Its usual `get()`, `post()`, `put()`,
+`patch()`, `delete()`, and `request()` calls acquire and renew a lease, and return
+ordinary `requests.Response` objects. Session headers, cookies, auth, hooks, and
+mounted adapters apply to the public application only. Private attestation uses
+an independent session. Both backends share the cryptographic ceremony code.
+
+`transaction()` prepares the request through Requests and hashes the exact
+prepared target and body. It accepts JSON, buffered bytes or text, form data,
+query parameters, and Requests' buffered multipart bodies. Streaming request
+bodies are rejected. Calls on one session are serialized; calling `send()`
+directly does not acquire or renew a lease. Ceremony/network failures raise
+`bytebind.requests.ClientError`; application HTTP errors remain in the response.
+
+Redirects stay disabled even when `allow_redirects=True` is supplied. TLS
+verification cannot be disabled, environment proxies and netrc are ignored, and
+HTTP adapters with retries enabled are rejected. Use `api.verify` with a CA
+bundle path when the public application uses a custom CA; the private Authority
+must have a certificate trusted by the separate attestation session. No operation
+is automatically replayed after an error or lost response.
+
+See [examples/client/api.py](examples/client/api.py) for a simple application
+calling both profiles with Requests.
 
 ### Lower-level API
 

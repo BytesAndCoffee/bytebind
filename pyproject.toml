@@ -17,8 +17,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+client = ["httpx>=0.28"]
+requests = ["requests>=2.32"]
 flask = ["flask>=3"]
-dev = ["flask>=3", "httpx>=0.28", "pytest>=8"]
+dev = ["flask>=3", "httpx>=0.28", "requests>=2.32", "pytest>=8"]
 
 [project.scripts]
 bytebind-authority = "bytebind.authority:main"

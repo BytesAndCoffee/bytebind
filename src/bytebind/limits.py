@@ -30,14 +30,25 @@ class PeerLimiter:
             return allowed
 
 
+def declared_fits(declared: str | None, limit: int) -> bool:
+    """Validate ASCII Content-Length without converting attacker-sized integers."""
+    if declared is None:
+        return True
+    if not declared or any(c < "0" or c > "9" for c in declared):
+        return False
+    value = declared.lstrip("0") or "0"
+    maximum = str(limit)
+    return len(value) < len(maximum) or (len(value) == len(maximum) and value <= maximum)
+
+
 async def read_capped(request: Request, limit: int) -> bytes | None:
     """The request body, or None if it is (or declares itself) larger than ``limit`` bytes."""
     declared = request.headers.get("content-length")
-    if declared is not None and (not declared.isdigit() or int(declared) > limit):
+    if not declared_fits(declared, limit):
         return None
     body = bytearray()
     async for chunk in request.stream():
-        body += chunk
-        if len(body) > limit:
+        if len(chunk) > limit - len(body):
             return None
+        body += chunk
     return bytes(body)

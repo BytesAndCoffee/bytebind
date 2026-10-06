@@ -99,3 +99,11 @@ def test_requires_running_tailnet_and_supports_self():
     directory.data["Self"] = directory.peer
     directory.data["Peer"] = {}
     assert discover_authority(directory, audience="manage") == "https://authority.tail123.ts.net:9443"
+
+
+def test_generic_capability_namespace():
+    assert AUTHORITY_CAPABILITY == "bytebind.example/authority"
+    directory = Directory(Tags=[], CapMap={
+        "bytebind.example/authority": [{"port": 9443, "audiences": ["manage"]}]
+    })
+    assert discover_authority(directory, audience="manage").endswith(":9443")

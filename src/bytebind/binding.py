@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from .discovery import AUTHORITY_CAPABILITY, AUTHORITY_TAG, DiscoveringAuthorityClient
-from .limits import PeerLimiter
+from .limits import PeerLimiter, declared_fits
 from .protocol import request_digest
 from .rp import AuthorityClient, RelyingParty
 from .tailscale import Directory
@@ -23,6 +23,7 @@ STATE_PATH = "/bytebind/"
 GRANT_KEY = "bytebind.grant"  # set only in-process, on a replayed transaction-bound request
 COVERED_HEADERS = ("content-type",)  # the headers Q covers; the browser client sends exactly these
 MAX_CACHED_ORIGINS = 32
+MAX_PROOF_BODY = 1024
 LEASE = "session"
 TRANSACTION = "tx"
 
@@ -42,7 +43,13 @@ def meets(claims: dict, required: frozenset[str]) -> bool:
 
 
 def check_requirements(require) -> frozenset[str]:
-    if isinstance(require, str) or not all(isinstance(item, str) and item for item in require):
+    if isinstance(require, str):
+        raise ValueError("require must be a sequence of nonempty claim strings")
+    try:
+        require = tuple(require)
+    except TypeError:
+        raise ValueError("require must be a sequence of nonempty claim strings") from None
+    if not all(isinstance(item, str) and item for item in require):
         raise ValueError("require must be a sequence of nonempty claim strings")
     return frozenset(require)
 
@@ -112,7 +119,7 @@ class Core:
         return self._challenge_limiter.allow(client)
 
     def body_fits(self, declared: str | None, body: bytes | None = None) -> bool:
-        if declared is not None and (not declared.isdigit() or int(declared) > self.max_transaction_body):
+        if not declared_fits(declared, self.max_transaction_body):
             return False
         return body is None or len(body) <= self.max_transaction_body
 

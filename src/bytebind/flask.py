@@ -21,6 +21,7 @@ so the client address and origin come from the proxy's headers.
 from __future__ import annotations
 
 import inspect
+import json
 from functools import wraps
 from importlib.resources import files
 from io import BytesIO
@@ -30,6 +31,7 @@ from flask import Flask, Response, current_app, jsonify, request
 from werkzeug.test import run_wsgi_app
 
 from . import binding as b
+from .limits import declared_fits
 from .binding import GRANT_KEY, SESSION_COOKIE, STATE_COOKIE, Grant
 from .discovery import AUTHORITY_CAPABILITY, AUTHORITY_TAG
 from .rp import AuthorityError, CeremonyError, RelyingParty
@@ -123,11 +125,16 @@ class ByteBind:
         return response
 
     def _proof(self) -> Response:
-        body = request.get_json(silent=True)
+        if not declared_fits(request.headers.get("Content-Length"), b.MAX_PROOF_BODY):
+            return self._failed(413)
+        raw = request.stream.read(b.MAX_PROOF_BODY + 1)
+        if len(raw) > b.MAX_PROOF_BODY:
+            return self._failed(413)
         try:
+            body = json.loads(raw)
             done = self._rp().accept_proof(request.headers.get("Origin"), body, request.cookies.get(STATE_COOKIE),
                                            request.cookies.get(SESSION_COOKIE))
-        except CeremonyError:
+        except (CeremonyError, ValueError):
             return self._failed(401)
         except (AuthorityError, OSError):
             return self._failed(503)

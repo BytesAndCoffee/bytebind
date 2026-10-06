@@ -62,7 +62,7 @@ read status through that socket.
 
 Tag the Authority node `tag:bytebind-authority`. Discovery uses its MagicDNS
 name and HTTPS control port 9443. You can advertise a custom port and audience
-through the `bytes.coffee/bytebind/authority` node capability; see the main
+through the `bytebind.example/authority` node capability; see the main
 [README](../../README.md). A local `/run/bytebind/control.sock` takes precedence
 when present. Set `BYTEBIND_AUTHORITY` if you want an explicit override.
 
@@ -93,17 +93,18 @@ in its grant claims, as shown. Tagging a device in Tailscale changes its
 ownership: a tagged node belongs to the tag rather than to a user, and key
 expiry is disabled by default. Consider that before tagging a personal laptop or
 phone, and prefer a dedicated admin device. Merge the following into your existing tailnet
-policy, assigning the three tags to the appropriate nodes:
+policy, assigning `tag:bytebind-authority` to the Authority, `tag:rp` to the
+application server, and `tag:admin` to the authorized browser device:
 
 ```json
 {
   "tagOwners": {
     "tag:bytebind-authority": ["autogroup:admin"],
-    "tag:bytebind-demo": ["autogroup:admin"],
+    "tag:rp": ["autogroup:admin"],
     "tag:admin": ["autogroup:admin"]
   },
   "grants": [
-    {"src": ["tag:bytebind-demo"], "dst": ["tag:bytebind-authority"], "ip": ["tcp:9443"]},
+    {"src": ["tag:rp"], "dst": ["tag:bytebind-authority"], "ip": ["tcp:9443"]},
     {"src": ["tag:admin"], "dst": ["tag:bytebind-authority"], "ip": ["tcp:8443"]}
   ]
 }
