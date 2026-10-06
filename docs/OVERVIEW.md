@@ -1,23 +1,35 @@
-# ByteBind in one paragraph
+# ByteBind overview
 
-The browser has to complete a round trip over the private network in the middle
-of the login, so the app grants access only while you are actually on that
-network, on an allowed device.
+ByteBind authorizes public management access through a fresh exchange involving
+an allowed private-network device. The browser obtains a challenge from the
+application, contacts a private Authority, and returns a proof that the
+application redeems before granting access.
 
-## The longer version
+## Request flow
 
-The client asks the app for a protected endpoint. The app asks the auth
-provider (the Authority) to open a transaction; the Authority mints secrets and
-a challenge, and gives the app a scoped auth set, which passes the challenge on
-to the client. The client then contacts the Authority directly over the private
-network, sending a proof (an HMAC keyed by the challenge, over a fresh nonce).
-The Authority checks that proof, identifies the device from its private-network
-identity (with Tailscale: `whois` and tags), and replies over the private
-network with a secret encrypted so only the challenge holder can open it. The
-client uses that secret to compute a final proof and hands it to the app. The
-app redeems it with the Authority, which checks it, consumes the transaction,
-and returns a grant. Only then does the app approve the request.
+1. The browser requests a management lease or submits a protected operation.
+2. The application creates a transaction with the Authority over an authenticated
+   control channel and returns its challenge to the browser.
+3. The browser posts a challenge MAC to the Authority's private `/attest`
+   endpoint. The Authority identifies the connecting device and checks policy.
+4. The Authority returns an encrypted secret. The browser uses it to compute a
+   redemption MAC and submits that proof to the application.
+5. The application redeems the proof with the Authority, which consumes the
+   transaction and returns a scoped grant.
 
-Nothing in ByteBind is a signature: the proofs are HMACs, and the Authority's
-reply is AES-256-GCM encryption. See [SPEC.md](../SPEC.md) for the exact
-transcripts and [blog-post.md](blog-post.md) for the motivation.
+The **session profile** creates a short lease, renewed by further exchanges.
+When private access is lost, renewals fail and the last lease expires. The
+**transaction-bound profile** includes a digest of a submitted operation and
+authorizes only that stored request.
+
+The proofs use HMAC-SHA256, the response key uses HKDF-SHA256, and the private
+response uses AES-256-GCM. Overlay identity and policy supply device authorization;
+the cryptographic transcript connects that decision to the public transaction.
+
+The design assumes trusted application code and an uncompromised authorized
+device. A valid session cookie remains usable until server-side expiry.
+Independent security review and real-tailnet deployment checks remain open.
+
+See [SPEC.md](../SPEC.md) for fields and validation rules,
+[ROADMAP.md](ROADMAP.md) for verification status, and
+[blog-post.md](blog-post.md) for the motivation.

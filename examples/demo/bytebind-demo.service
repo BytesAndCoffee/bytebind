@@ -1,0 +1,20 @@
+[Unit]
+Description=ByteBind demo
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bytebind-demo
+Group=bytebind-demo
+WorkingDirectory=/opt/bytebind
+EnvironmentFile=/etc/bytebind-demo.env
+ExecStart=/opt/bytebind/.venv/bin/bytebind-demo
+StateDirectory=bytebind-demo
+Environment=BYTEBIND_RP_DB=/var/lib/bytebind-demo/rp.sqlite3
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
