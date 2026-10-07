@@ -13,7 +13,8 @@ exchange involving an allowed private-overlay device. The browser obtains a
 challenge from the application, completes private attestation, and returns a
 proof for one-time redemption.
 
-- **[SPEC.md](SPEC.md):** the protocol, draft 0.7.
+- **[SPEC.md](SPEC.md):** protocol v1, specification 0.8-draft (not implemented). The
+  reference implementation follows draft 0.7, in git history at commit `3072234`.
 - **[docs/blog-post.md](docs/blog-post.md):** why it exists, in plain language.
 - **[docs/OVERVIEW.md](docs/OVERVIEW.md):** the exchange in one paragraph.
 - **[docs/ROADMAP.md](docs/ROADMAP.md):** what's planned for draft 0.8, open questions, and what is and isn't verified.

@@ -1,6 +1,8 @@
 # ByteBind threat model
 
-**Scope:** the protocol (SPEC.md draft 0.7) and the reference implementation: the
+**Scope:** the protocol as implemented (draft 0.7, git `3072234`; `SPEC.md` is now
+the unimplemented 0.8 draft, whose person step-up is covered in §6.10) and the
+reference implementation: the
 Authority (`authority.py`, `store.py`, `config.py`), the Tailscale attestation
 provider (`tailscale.py`), Authority discovery (`discovery.py`), the RP core and
 FastAPI/Flask bindings (`rp.py`, `binding.py`, `fastapi.py`, `flask.py`), the
@@ -280,7 +282,10 @@ supported tailscaled version.
 
 ### 6.4 Authority discovery (RP side)
 
-**T-D1. A rogue Authority via tag or capability. High (deployment), Partial.**
+**T-D1. A rogue Authority via tag or capability. Accepted (operator trust).**
+Whoever controls the Authority tag or capability is an approved operator, so
+this is an accepted trust boundary (user decision, 2026-10-06).
+
 With no `BYTEBIND_AUTHORITY` set, the RP uses whichever single online node carries
 `tag:bytebind-authority` or the `bytebind.example/authority` capability,
 including itself. Grants are unsigned, so whoever controls that node can issue
@@ -519,6 +524,42 @@ the operations docs and set log retention to match.
 **T-PR3. Silent fingerprinting by registered RPs. Low, Accepted.** Background
 ceremonies tell an RP whether a visitor's device is authorized for it, without
 any user action. This is limited to RPs the operator registered.
+
+### 6.10 Person step-up (specification 0.8-draft; not implemented)
+
+These threats apply to the optional Authority-owned WebAuthn step-up in
+`SPEC.md` sections 10–17. Nothing here is implemented.
+
+| Threat or boundary | Treatment |
+|---|---|
+| Internet-only or unauthorized peer tries to trigger prompts | No handoff or options before base acceptance; the private context is re-checked at the Authority page |
+| Registered RP, RP XSS, or compromised application script | Can't obtain credential material or weaken stored assurance; can request ceremonies within its registered policy after valid base participation. Reduces T-B1 only for person-gated routes |
+| Prompt abuse by an authorized RP | Explicit user action in the Authority frame, Authority UI naming the registered application, rate limits, user refusal. Base gating alone doesn't eliminate it |
+| Phishing or RP-ID/origin confusion | Authority-owned context, exact-host RP ID, exact origin verification; no third-party RP IDs |
+| Assertion replay or cross-RP/profile/operation reuse | Challenge `W` bound to immutable `cid`/RP/profile/`Q`; atomic consumption |
+| UP/UV downgrade or forged authorization strings | Authority checks flags and policy; RP checks structured assurance; static strings never count |
+| Unauthorized enrollment or existing-subject takeover | Dedicated enrollment policy; independently authenticated subject attachment; invites never imply device ownership |
+| Shared device mistaken for the current person | Separate namespaces; no owner-derived subject; no device-wide person cache; associations are per browser lease |
+| Stable identifiers and correlation | Pairwise identifiers by default; global names need explicit permission; credential material stays private |
+| Revocation, recovery, and racing assertions | Generations and atomic checks; immediate Authority-side invalidation; recovery never defaults to device ownership |
+| Synced credentials and multiple authenticators | Supported, with no claim that a credential belongs to the enrolling device |
+| Lost device or stolen session | A person requirement adds an independent check; leases stay bounded; revoke device and credentials as appropriate |
+| Authorized-device compromise or powerful extension | Out of scope. Passkeys don't isolate processes or prevent manipulation of an already authorized application |
+| Authority compromise or Authority-page XSS | The Authority is trusted for enrollment, verification, and claims. Its pages are new critical attack surface: CSP, no third-party scripts, isolated UI |
+| Application script overlays or replaces the step-up iframe | The native passkey UI names the Authority RP ID. A fake frame can't produce a valid assertion. No informed-intent guarantee |
+| Another registered origin embeds a transaction's step-up page | Per-RP `frame-ancestors`; handoff refused on another RP's path; a mismatched `topOrigin` refuses and burns |
+| Browser omits `topOrigin` (reported for Safari) | Accepted. Binding rests on browser-enforced per-RP framing and the RP-scoped handoff |
+| Application page framed by another origin | WebKit refuses WebAuthn with more than one cross-origin ancestor; step-up requires a top-level page |
+| RP enumeration through the person listener | Per-RP paths avoid one response listing every origin. RP identifiers and per-path origins remain enumerable (accepted) |
+| Third-party cookies blocked or partitioned | Memory-only attempt token; no cookie dependency |
+| Frame relays base attestation | Fixed request set; the person listener serves no base-attestation path |
+| Success followed by lost delivery or redemption | Consumed once; no automatic operation replay; outcome reported as uncertain |
+| Session renewal after verification | Association preserved without resetting age; validated with the Authority before each person-gated handler; transactions always need a fresh assertion |
+| Overlay address exposure | `IP` in `H2` is visible to application-origin code (as T-PR1) |
+
+WebAuthn doesn't attest that the authenticator is part of the overlay device or
+that a credential is held exclusively. It establishes presence or local
+verification, never informed approval of an operation.
 
 ## 7. Invariants and test coverage
 
