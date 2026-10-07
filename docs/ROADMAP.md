@@ -37,7 +37,8 @@ These findings remain open; documentation updates do not resolve code requiremen
 2. **Browser acceptance** on real private HTTPS listeners with current Chrome,
    Safari, and Firefox, and real platform authenticators and security keys:
    - iframe delegation (`publickey-credentials-get`, CSP, Permissions-Policy);
-   - Safari's gesture and consent prompt;
+   - invisible frames invoking `get()` without a frame-local click, including
+     Safari's gesture requirements and consent prompt;
    - whether each browser sends `topOrigin`;
    - the actual local-network permission token names and subframe permissions;
    - blocked third-party cookies;

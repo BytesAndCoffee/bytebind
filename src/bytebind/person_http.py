@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from . import protocol as p
 from .authority import open_store, verify_device
 from .limits import PeerLimiter, read_capped
-from .person import PersonService
+from .person import EnrollmentRateLimited, PersonService
 from .store import TransactionError
 from .tailscale import AttestationError, LocalAPI, authorize, identify
 
@@ -30,7 +30,7 @@ def create_person_app(config, directory=None, store=None):
         return {
             "Cache-Control": "no-store",
             "Referrer-Policy": "no-referrer",
-            "Content-Security-Policy": f"default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors {frame}; base-uri 'none'; form-action 'none'",
+            "Content-Security-Policy": f"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors {frame}; base-uri 'none'; form-action 'none'",
             "Cross-Origin-Opener-Policy": "same-origin",
             "X-Content-Type-Options": "nosniff",
         }
@@ -53,15 +53,19 @@ def create_person_app(config, directory=None, store=None):
         return response
 
     def page(mode, rp_id=""):
-        application = "<p>Application: " + escape(config.rps[rp_id].origin) + "</p>" if rp_id else ""
+        application = '<p id="application">Application: ' + escape(config.rps[rp_id].origin) + "</p>" if rp_id else ""
         return (
-            '<!doctype html><html><head><meta charset="utf-8"><title>ByteBind Authority</title></head><body data-mode="'
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<title>ByteBind passkeys</title><link rel="stylesheet" href="/person.css"></head><body data-mode="'
             + mode
             + '" data-rp="'
             + escape(rp_id, quote=True)
-            + '"><h1>ByteBind</h1>'
+            + '"><main><p class="brand">ByteBind</p><h1 id="heading">Passkeys</h1>'
+            '<p id="intro">Loading…</p>'
             + application
-            + '<p id="status">Ready</p><div id="controls"></div><script src="/person.js"></script></body></html>'
+            + '<div id="controls"></div><p id="status" role="status" aria-live="polite"></p>'
+            '<noscript>Enable JavaScript to use passkeys.</noscript></main><script src="/person.js"></script></body></html>'
         )
 
     @app.get("/step-up/{rp_id}")
@@ -81,6 +85,14 @@ def create_person_app(config, directory=None, store=None):
         return Response(
             files("bytebind").joinpath("web", "person.js").read_text(),
             media_type="application/javascript",
+            headers=headers(),
+        )
+
+    @app.get("/person.css")
+    def stylesheet():
+        return Response(
+            files("bytebind").joinpath("web", "person.css").read_text(),
+            media_type="text/css",
             headers=headers(),
         )
 
@@ -152,6 +164,8 @@ def create_person_app(config, directory=None, store=None):
             else:
                 return Response(status_code=404)
             return JSONResponse(result, headers=headers())
+        except EnrollmentRateLimited:
+            return JSONResponse({"error": "rate_limited"}, 429, headers=headers())
         except (ValueError, TypeError, KeyError, p.ProtocolError, TransactionError, AttestationError):
             if row and row["status"] in {"base_attested", "stepup_pending"}:
                 try:

@@ -12,6 +12,14 @@ from conftest import ROOT
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 
+
+def test_hidden_person_step_up():
+    subprocess.run(
+        ["node", str(ROOT / "tests/hidden_stepup.cjs"), str(ROOT / "src/bytebind/web/bytebind.js")],
+        capture_output=True, text=True, timeout=30, check=True,
+    )
+
+
 SCRIPT = """
 const B = require(%(client)s);
 const V = require(%(vectors)s);

@@ -21,7 +21,7 @@ from bytebind.config import parse, ConfigError
 from bytebind.person import PersonService
 from bytebind.person_http import create_person_app
 from bytebind.rp import RelyingParty, CeremonyError
-from bytebind.store import TransactionError
+from bytebind.store import TransactionError, token_hash
 from conftest import APP, ATTEST_URL, PEER, NODE, FakeTailnet, config_data
 
 PERSON = "https://authority.tail1234.ts.net:8444"
@@ -122,6 +122,23 @@ def world(tmp_path, clock):
         ) as base,
     ):
         yield config, store, tailnet, service, authenticator, person, base, clock, subject
+
+
+def test_person_ui_assets_keep_private_page_boundaries(world):
+    client = world[5]
+    for path, mode in (("/enroll", "enroll"), ("/manage", "manage")):
+        page = client.get(path)
+        assert f'data-mode="{mode}"' in page.text
+        assert 'href="/person.css"' in page.text
+        assert 'aria-live="polite"' in page.text
+        assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+        assert "style-src 'self'" in page.headers["content-security-policy"]
+        assert "'unsafe-inline'" not in page.headers["content-security-policy"]
+    stylesheet = client.get("/person.css")
+    assert stylesheet.status_code == 200
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert stylesheet.headers["cache-control"] == "no-store"
+    assert client.get("/person.css", headers={"Host": "other.example"}).status_code == 403
 
 
 def start(world, assurance="verification", profile="session", identify=False):
@@ -323,6 +340,64 @@ def test_enrollment_never_uses_owner_or_device_tag_as_person(world):
         service.enrollment_complete(
             second["token"], NODE, authenticator.register(second["options"]), "Replay"
         )
+
+
+@pytest.mark.parametrize("extensions", [{}, {"credProps": {}}, None])
+def test_enrollment_accepts_optional_credential_properties_omission(world, extensions):
+    service = world[3]
+    invite, _ = service.invite("Platform participant")
+    ready = service.enrollment_begin(NODE, invite=invite)
+    selection = ready["options"]["publicKey"]["authenticatorSelection"]
+    assert selection["residentKey"] == "required"
+    assert selection["requireResidentKey"] is True
+    assert selection["userVerification"] == "required"
+    authenticator = Authenticator(service.rp_id)
+    response = authenticator.register(ready["options"])
+    if extensions is None:
+        response.pop("clientExtensionResults")
+    else:
+        response["clientExtensionResults"] = extensions
+    service.enrollment_complete(ready["token"], NODE, response, "Passkey")
+    # It is attached to the independently enrolled subject and usable for UV.
+    login = service.management_begin(NODE)
+    verified = service.management_complete(
+        login["token"], NODE, authenticator.assertion(login["options"], cross=False, top=None)
+    )
+    assert service.manage(verified["token"], NODE, "list")["credentials"][0]["name"] == "Passkey"
+
+
+@pytest.mark.parametrize("properties", [{"rk": False}, {"rk": 1}, {"rk": None}, {"rk": "true"}, "invalid"])
+def test_enrollment_rejects_negative_or_malformed_credential_properties(world, properties):
+    service = world[3]
+    invite, _ = service.invite("Participant")
+    ready = service.enrollment_begin(NODE, invite=invite)
+    response = Authenticator(service.rp_id).register(ready["options"])
+    response["clientExtensionResults"] = {"credProps": properties}
+    with pytest.raises(TransactionError):
+        service.enrollment_complete(ready["token"], NODE, response, "Passkey")
+    with pytest.raises(TransactionError):
+        service.enrollment_complete(ready["token"], NODE, response, "Replay")
+
+
+@pytest.mark.parametrize("invalid", ["uv", "origin", "expiry", "issued_requirement"])
+def test_optional_properties_do_not_bypass_registration_checks(world, invalid):
+    service = world[3]
+    invite, _ = service.invite("Participant")
+    ready = service.enrollment_begin(NODE, invite=invite)
+    response = Authenticator(service.rp_id).register(ready["options"], uv=invalid != "uv")
+    response["clientExtensionResults"] = {}
+    if invalid == "origin":
+        data = json.loads(p.b64decode(response["response"]["clientDataJSON"], len(response["response"]["clientDataJSON"]) * 3 // 4))
+        data["origin"] = "https://wrong.example"
+        response["response"]["clientDataJSON"] = p.b64encode(json.dumps(data).encode())
+    elif invalid == "expiry":
+        world[7].now += 121
+    elif invalid == "issued_requirement":
+        state = json.loads(world[1]._read("SELECT state FROM person_attempts WHERE token_hash=?", (token_hash(ready["token"]),))[0])
+        state.pop("resident_key_requirement")
+        world[1]._write("UPDATE person_attempts SET state=? WHERE token_hash=?", (json.dumps(state), token_hash(ready["token"])))
+    with pytest.raises(TransactionError):
+        service.enrollment_complete(ready["token"], NODE, response, "Passkey")
 
 
 def test_management_uv_revoke_invalidates_association(world):

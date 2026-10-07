@@ -10,9 +10,13 @@ from contextlib import closing
 from urllib.parse import urlsplit
 
 from . import protocol as p
-from .store import TransactionError, TransactionStore, token_hash
+from .store import TransactionError, TransactionStore, invite_hash, token_hash
 
 logger = logging.getLogger(__name__)
+
+
+class EnrollmentRateLimited(TransactionError):
+    pass
 
 
 def _binary(value, maximum=16384):
@@ -200,56 +204,78 @@ class PersonService:
             or not name.strip()
             or len(name) > 128
             or type(ttl) is not int
-            or not 0 < ttl <= 86400
+            or not 0 < ttl <= 900
         ):
             raise ValueError("invalid enrollment invite")
         subject_id, user_handle = secrets.token_bytes(32), secrets.token_bytes(32)
-        token = p.b64encode(secrets.token_bytes(32))
         with self.store.atomic() as connection:
+            connection.execute("DELETE FROM invites WHERE expires_at<=?", (self.store.now(),))
+            for _ in range(16):
+                code = secrets.token_hex(4).upper()
+                digest = invite_hash(code)
+                if connection.execute("SELECT 1 FROM invites WHERE token_hash=?", (digest,)).fetchone() is None:
+                    break
+            else:
+                raise TransactionError("could not allocate an invite")
             connection.execute(
                 "INSERT INTO subjects(id,user_handle,name) VALUES (?,?,?)", (subject_id, user_handle, name)
             )
             connection.execute(
                 "INSERT INTO invites(token_hash,subject_id,expires_at) VALUES (?,?,?)",
-                (token_hash(token), subject_id, self.store.now() + ttl),
+                (digest, subject_id, self.store.now() + ttl),
             )
-        return token, p.b64encode(subject_id)
+        return code[:4] + "-" + code[4:], p.b64encode(subject_id)
+
+    def _consume_invite(self, device_id, invite, now):
+        # Commit failed guesses before raising. The shared database serializes
+        # budgets across processes, IP addresses, listeners and restarts.
+        subject_id = None
+        with self.store.atomic() as connection:
+            connection.execute("DELETE FROM enrollment_failures WHERE failed_at<=?", (now - 900,))
+            total = connection.execute("SELECT COUNT(*) FROM enrollment_failures").fetchone()[0]
+            device = connection.execute(
+                "SELECT COUNT(*) FROM enrollment_failures WHERE device_id=?", (device_id,)
+            ).fetchone()[0]
+            if device >= 10 or total >= 100:
+                raise EnrollmentRateLimited("too many enrollment guesses")
+            try:
+                digest = invite_hash(invite)
+            except (ValueError, TypeError, p.ProtocolError):
+                digest = None
+            row = connection.execute(
+                "SELECT subject_id FROM invites WHERE token_hash=? AND used=0 AND expires_at>?", (digest, now)
+            ).fetchone()
+            if row is None:
+                connection.execute("INSERT INTO enrollment_failures VALUES (?,?)", (device_id, now))
+            else:
+                connection.execute("UPDATE invites SET used=1 WHERE token_hash=?", (digest,))
+                subject_id = row[0]
+        if subject_id is None:
+            raise TransactionError("invite unavailable")
+        return subject_id
 
     def enrollment_begin(self, device_id, *, invite=None, management=None, self_name=None):
         from fido2.webauthn import PublicKeyCredentialUserEntity, AttestedCredentialData
 
         now = self.store.now()
         self._quota(device_id)
+        subject_id = self._consume_invite(device_id, invite, now) if invite is not None else None
         # Consume authorization into one registration attempt before publishing
         # options. Lost registration requires a new invite or fresh management UV.
         with self.store.atomic() as connection:
-            if invite is not None:
-                row = connection.execute(
-                    "SELECT subject_id FROM invites WHERE token_hash=? AND used=0 AND expires_at>?",
-                    (token_hash(invite), now),
-                ).fetchone()
-                if row is None:
-                    raise TransactionError("invite unavailable")
-                subject_id = row[0]
-                if (
+            if invite is None:
+                if management is not None:
+                    subject_id = self._consume_management(connection, management, device_id)[0]
+                elif self_name is not None and self.config.person.self_enrollment:
+                    if not isinstance(self_name, str) or not self_name.strip() or len(self_name) > 128:
+                        raise TransactionError("invalid subject name")
+                    subject_id = secrets.token_bytes(32)
                     connection.execute(
-                        "UPDATE invites SET used=1 WHERE token_hash=? AND used=0", (token_hash(invite),)
-                    ).rowcount
-                    != 1
-                ):
-                    raise TransactionError("invite consumed")
-            elif management is not None:
-                subject_id = self._consume_management(connection, management, device_id)[0]
-            elif self_name is not None and self.config.person.self_enrollment:
-                if not isinstance(self_name, str) or not self_name.strip() or len(self_name) > 128:
-                    raise TransactionError("invalid subject name")
-                subject_id = secrets.token_bytes(32)
-                connection.execute(
-                    "INSERT INTO subjects(id,user_handle,name,self_enrolled) VALUES (?,?,?,1)",
-                    (subject_id, secrets.token_bytes(32), self_name),
-                )
-            else:
-                raise TransactionError("enrollment not authorized")
+                        "INSERT INTO subjects(id,user_handle,name,self_enrolled) VALUES (?,?,?,1)",
+                        (subject_id, secrets.token_bytes(32), self_name),
+                    )
+                else:
+                    raise TransactionError("enrollment not authorized")
             subject = connection.execute(
                 "SELECT user_handle,name,generation FROM subjects WHERE id=? AND active=1", (subject_id,)
             ).fetchone()
@@ -266,6 +292,9 @@ class PersonService:
             user_verification="required",
             extensions={"credProps": True},
         )
+        # credProps.rk is optional. Retain the requirement we issued so its
+        # omission cannot turn a preferred/non-resident request into enrollment.
+        state["resident_key_requirement"] = "required"
         token = p.b64encode(secrets.token_bytes(32))
         with self.store.atomic() as connection:
             self._quota(device_id, connection)
@@ -286,24 +315,46 @@ class PersonService:
     def enrollment_complete(self, token, device_id, response, label):
         from fido2.webauthn import RegistrationResponse
 
-        attempt = self._local_attempt(token, "enroll", device_id)
+        try:
+            attempt = self._local_attempt(token, "enroll", device_id)
+        except TransactionError:
+            logger.warning("passkey registration refused: attempt_unavailable")
+            raise
+        stage = "response_shape"
         try:
             data = validate_response(response, registration=True)
+            stage = "top_level_context"
             if data.get("crossOrigin", False) is not False:
                 raise ValueError("registration must be top-level")
+            stage = "credential_label"
             if not isinstance(label, str) or not label.strip() or len(label) > 128:
                 raise ValueError("invalid label")
+            stage = "credential_encoding"
             parsed = RegistrationResponse.from_dict(response)
-            auth = self.server.register_complete(json.loads(attempt["state"]), parsed)
+            state = json.loads(attempt["state"])
+            stage = "webauthn_validation"
+            auth = self.server.register_complete(state, parsed)
+            stage = "algorithm_or_verification"
             if (
                 auth.credential_data.public_key.ALGORITHM != -7
                 or not auth.is_user_present()
                 or not auth.is_user_verified()
             ):
                 raise ValueError("unsupported registration")
-            # The rk extension, requested by the page, confirms discoverability.
-            if parsed.client_extension_results.get("credProps", {}).get("rk") is not True:
+            # Some platform clients omit this optional extension. They still
+            # must honor residentKey=required, which the Authority records above.
+            # An explicit negative or malformed report never gets that fallback.
+            stage = "discoverable_credential"
+            properties = parsed.client_extension_results.get("credProps", {})
+            if not isinstance(properties, dict):
+                raise ValueError("invalid credential properties")
+            if "rk" in properties:
+                discoverable = properties["rk"] is True
+            else:
+                discoverable = state.get("resident_key_requirement") == "required"
+            if not discoverable:
                 raise ValueError("discoverable credential required")
+            stage = "subject_or_storage"
             with self.store.atomic() as connection:
                 if connection.execute(
                     "SELECT active,generation FROM subjects WHERE id=?", (attempt["subject_id"],)
@@ -322,6 +373,8 @@ class PersonService:
                     ),
                 )
         except (ValueError, KeyError, TypeError, p.ProtocolError, TransactionError, sqlite3.IntegrityError):
+            # Fixed stage names only: never log user data or verifier exceptions.
+            logger.warning("passkey registration refused: %s", stage)
             self.store._write("UPDATE person_attempts SET used=1 WHERE token_hash=?", (token_hash(token),))
             raise TransactionError("registration failed") from None
 

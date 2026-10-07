@@ -86,8 +86,8 @@ def create_app(rp: RelyingParty | None = None, *, person_origin: str | None = No
         return (
             '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Register a passkey</title></head><body>'
             "<h1>Register an Authority passkey</h1><p>Ask your operator for a one-use enrollment invite. "
-            "On an enrollment-authorized device, open the Authority page, enter your invite and a passkey name, "
-            "then prepare enrollment and create your passkey.</p>"
+            "On an enrollment-authorized device, open the Authority page, paste your invite, "
+            "choose Continue, then Create passkey. Naming the passkey is optional.</p>"
             f'<p><a href="{private}/enroll" target="_blank" rel="noopener noreferrer">Register passkey</a></p>'
             f'<p><a href="{private}/manage" target="_blank" rel="noopener noreferrer">Manage passkeys</a></p>'
             "<p>Return here after registration. Your person identity is independent of the device’s owner.</p>"

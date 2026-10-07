@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import sqlite3
 import time
@@ -61,11 +62,27 @@ CREATE TABLE IF NOT EXISTS person_attempts (
  state TEXT NOT NULL, expires_at REAL NOT NULL, used INTEGER NOT NULL DEFAULT 0,
  credential_id BLOB, credential_version INTEGER, subject_generation INTEGER
 );
+CREATE TABLE IF NOT EXISTS enrollment_failures (device_id TEXT NOT NULL, failed_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS enrollment_failures_time ON enrollment_failures(failed_at);
+CREATE INDEX IF NOT EXISTS enrollment_failures_device ON enrollment_failures(device_id,failed_at);
 """
 
 
 def token_hash(token: str) -> bytes:
     return hashlib.sha256(p.b64decode(token, 32)).digest()
+
+
+def invite_hash(code: str) -> bytes:
+    """Normalize human codes without changing opaque ceremony-token decoding."""
+    if not isinstance(code, str):
+        raise ValueError("invalid invite")
+    code = code.strip()
+    match = re.fullmatch(r"([0-9a-fA-F]{4})-?([0-9a-fA-F]{4})", code)
+    if match:
+        raw = bytes.fromhex(match[1] + match[2])
+        return hashlib.sha256(b"bytebind:v1:enrollment-invite\0" + raw).digest()
+    # Previously issued 256-bit invites remain usable until their stored expiry.
+    return token_hash(code)
 
 
 @dataclass(frozen=True)
@@ -179,6 +196,7 @@ class TransactionStore:
         )
         for table in ("invites", "person_attempts", "device_grants"):
             self._write(f"DELETE FROM {table} WHERE expires_at < ?", (now,))
+        self._write("DELETE FROM enrollment_failures WHERE failed_at<=?", (now - 900,))
         self._write("DELETE FROM person_associations WHERE deadline < ? OR active=0", (now,))
 
     def begin(

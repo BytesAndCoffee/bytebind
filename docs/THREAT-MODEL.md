@@ -63,13 +63,15 @@ and failure handling, see SPEC.md sections 6–9 and 14.
 
 [Mermaid source](diagrams/handshake.mmd).
 
-Person-required exchanges add the Authority iframe and the one-use result
+Person-required exchanges add an invisible Authority iframe and the one-use result
 collection between base attestation and redemption:
 
 ![ByteBind person handshake: base acceptance, Authority passkey assertion, result collection and redemption](diagrams/person-handshake.png)
 
 [Person sequence source](diagrams/person-handshake.mmd). Enrollment and credential
 management use separate top-level Authority pages; they are not part of this iframe.
+The browser's native passkey prompt handles person verification. Hiding the frame
+does not remove user presence, user verification, or signed origin checks.
 
 The Authority's device policy and the RP's route requirements are separate
 checks. An attestation or redeemed grant alone does not authorize every route.

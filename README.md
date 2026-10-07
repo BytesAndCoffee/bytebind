@@ -99,7 +99,8 @@ so Secure cookies and WebCrypto work.
 | RP → Authority | Control POST `/v1/person-validation`, before a person-gated handler | Current association status or refusal |
 
 Device-only attestation returns H2 directly. Person-required attestation returns
-202 with a handoff to the private Authority iframe; H2 becomes collectible only
+202 with a handoff to an invisible private Authority iframe, which invokes the
+browser's native passkey prompt; H2 becomes collectible only
 after the required assertion succeeds. Person sessions preserve their original
 age during device renewal; a person-gated transaction always needs a fresh assertion.
 

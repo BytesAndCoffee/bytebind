@@ -604,7 +604,9 @@ and is never exposed to the application, persisted, or logged.
 The application embeds the step-up page after validating its URL (section 12):
 
 ```html
-<iframe src="<person_origin>/step-up/<rp_id>#<handoff>"
+<iframe hidden aria-hidden="true" tabindex="-1"
+        style="display: none !important"
+        src="<person_origin>/step-up/<rp_id>#<handoff>"
         allow="publickey-credentials-get <person_origin>; local-network <person_origin>; local-network-access <person_origin>">
 </iframe>
 ```
@@ -615,6 +617,13 @@ more than one cross-origin ancestor. Application `Permissions-Policy` and CSP
 sandboxed in a way that removes its origin. Both local-network token names are
 delegated because browsers have used each; the names are provisional.
 
+The iframe MUST be invisible, take no space in the application layout, and be
+excluded from keyboard navigation and the accessibility tree. It MUST NOT show
+an Authority panel or require a click inside the frame. The browser's native
+passkey prompt provides credential selection, consent, and any required user
+verification. Hidden framing does not remove user presence or verification
+requirements. Enrollment and management remain visible top-level pages.
+
 The iframe MUST NOT send or accept messages to or from its embedder. It MUST NOT
 perform, proxy, or relay base attestation, handle `H2`, submit the proof, or
 disclose identity results. Its only requests are handoff, options, assertion,
@@ -623,13 +632,14 @@ polling (section 12).
 
 Before exchanging the handoff, the page MUST check that the WebAuthn API is
 present and, where the browser exposes it, that `publickey-credentials-get` is
-allowed. If either check fails it MUST NOT exchange the handoff; it shows
-frame-local text that person verification can't complete here, grants nothing,
-and the attempt expires. After a successful exchange it fetches options at once.
-It MUST show its own "Verify with passkey" control, enabled only when options
-are ready, and MUST call `get()` directly from that control's activation with no
-intervening network request. Once the handoff is consumed, any retry needs a new
-transaction.
+allowed. If either check fails it MUST NOT exchange the handoff, grants nothing,
+and the attempt expires. After a successful exchange it obtains options and
+calls `get()` once, without waiting for a frame-local control. If the browser
+refuses this invocation or the user cancels, the page SHOULD post an abort; it
+MUST NOT retry automatically, reveal the frame, or lower the required assurance.
+Once the handoff is consumed, any retry needs a new transaction. An unsupported
+browser refuses person-gated access; this profile does not bypass browser gesture
+or permission requirements.
 
 Browser behavior (delegation, consent prompts, `topOrigin`, local-network
 permissions) is not assumed; see the acceptance gates in ROADMAP.
@@ -836,9 +846,17 @@ admits a device to enrollment; it doesn't prove whose credentials may change.
   manage it, or an approved recovery procedure with independent operator
   authentication and audit. A name, provider owner, device tag, or bare subject
   ID MUST NOT suffice, and subjects MUST NOT be merged by name or owner.
-- **Invites:** 32 random bytes stored only as a hash; scoped to one subject and
-  purpose (`new_subject` or `add_credential`); valid 15 minutes by default, at
-  most 24 hours. Invites MUST be delivered out of band, MUST be redacted from
+- **Invites:** eight uniformly random hexadecimal characters (32 bits), displayed
+  as `AB12-CD34`; input MUST accept either case, with or without the separator.
+  Only a domain-separated hash of the normalized code is stored. An Authority
+  MUST avoid reusing codes while an existing record remains unexpired, including
+  consumed records. Invites are scoped to one subject and purpose (`new_subject`
+  or `add_credential`), valid for at most 15 minutes. Failed invite checks MUST
+  have a persistent sliding-window budget keyed to the verified stable device
+  identity: at most 10 per device and 100 across the Authority per 15 minutes.
+  These budgets MUST be atomic across processes and survive listener restarts;
+  changing IP addresses or successful enrollment MUST NOT reset them. Invites
+  MUST be delivered out of band, MUST be redacted from
   logs, and MUST be consumed only from an enrollment-authorized context, where
   consumption creates one registration attempt. An
   `add_credential` invite supplements fresh existing-credential verification and

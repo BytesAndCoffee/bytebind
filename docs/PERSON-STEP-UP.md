@@ -50,13 +50,27 @@ command:
 bytebind-authority --config authority.toml invite --name "Alice"
 ```
 
-Deliver the one-use invite to its intended person through your trusted channel.
-It expires after 15 minutes. On an enrollment-authorized device, open
-`https://authority.example-tailnet.ts.net:8444/enroll`, enter the invite and a
-credential label, prepare registration, then click the registration button.
+The command prints an eight-character hex code such as `AB12-CD34`. Deliver the
+one-use invite to its intended person through your trusted channel. It expires
+after 15 minutes. Either case works, with or without the hyphen. Failed guesses
+are limited to 10 per stable device and 100 across the Authority in any 15-minute
+window. These limits persist across listener restarts and IP changes; after the
+budget is exhausted, even a correct code must wait. Previously issued long
+invites remain usable until their existing expiry. On an enrollment-authorized device, open
+`https://authority.example-tailnet.ts.net:8444/enroll`, paste the invite, choose
+**Continue**, then **Create passkey**. Naming the passkey is optional.
 The `/manage` page requires a fresh verified passkey before listing, renaming,
 revoking or adding credentials. A shared device can enroll and authenticate
 different subjects; a subject can attach credentials on multiple devices.
+
+Registration requests `residentKey: "required"`, `requireResidentKey: true`, and
+`userVerification: "required"`. The Authority retains that requirement in the
+one-use attempt. A browser may omit the optional `credProps.rk` result; when it
+does, the Authority uses its recorded requirement. An explicit negative or
+malformed result is refused. See the [WebAuthn credential properties extension](https://www.w3.org/TR/webauthn-3/#sctn-authenticator-credential-properties-extension).
+Origin, challenge, RP ID, user presence, verification and expiry checks still
+apply. Refusals log a fixed validation-stage name without credential material,
+invites or person identifiers.
 
 ## Application bindings
 
@@ -83,8 +97,12 @@ checks all supplied device tags or authorization claims.
 The built-in HTML authentication page selects person assurance from the protected
 route. A custom page can call `ByteBind.personSession("/account")`; the RP selects
 the stored route policy, so the browser cannot lower its assurance requirement.
-Base attestation runs first. The Authority's per-RP iframe then prepares passkey
-options and invokes WebAuthn directly from the user's click. It sends no messages,
+Base attestation runs first. The Authority's invisible per-RP iframe then prepares
+passkey options and invokes WebAuthn once. The browser's native passkey prompt
+handles selection and verification; there is no embedded Authority panel or extra
+verification button. If the browser blocks the call or the user cancels, the
+attempt is aborted without an automatic retry or reduced assurance. Enrollment
+and management remain visible top-level pages. The frame sends no messages,
 identity, attestation proof or H2 to the application page. The original client
 collects H2 through the base listener and submits the ordinary RP proof.
 

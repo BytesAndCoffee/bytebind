@@ -183,14 +183,20 @@ Issue a one-use invite using the Authority's service account:
 bytebind-authority --config authority.toml invite --name "Demo participant"
 ```
 
-Give the invite to the intended person through your trusted channel; it expires
-after 15 minutes. In the demo, open **Register or manage passkeys**, then
+The invite is eight hex characters, displayed as `AB12-CD34`; either case works,
+with or without the hyphen. Give it to the intended person through your trusted
+channel; it expires after 15 minutes. In the demo, open **Register or manage passkeys**, then
 **Register passkey**. This opens the private Authority page. Enter the invite
-and a passkey name, click **Prepare enrollment**, then **Create passkey**.
+and click **Continue**, then **Create passkey**. Naming the passkey is optional.
 Return to the demo and choose **Try passkey step-up**.
 
-`/verified` first completes device attestation, then displays the Authority's
-passkey iframe. Click **Verify with passkey** there. The resulting page shows
+Registration only shows enrollment controls. **Manage existing passkeys** opens
+a separate page where you verify to see passkeys by name, then choose **Rename**,
+**Remove**, or **Add a passkey**. Each action requires fresh passkey verification;
+you do not need to copy credential IDs.
+
+`/verified` first completes device attestation, then uses an invisible Authority
+iframe to open the browser's native passkey prompt. The resulting page shows
 the person's pairwise identifier for this application. Every visit validates
 the association with the Authority; silent device renewal does not extend its
 five-minute person-verification age.
