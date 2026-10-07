@@ -1,0 +1,47 @@
+"""Render the person-step-up sequence with the shared Pillow chart renderer."""
+from draw_handshake import render
+
+rows = [
+    ('phase', '1. Create a person challenge and complete base attestation'),
+    ('arrow', 0, 1, 'Request person session or submit person transaction'),
+    ('arrow', 1, 3, 'POST /v1/transaction: protocol=1, draft=0.8, audience, profile, person assurance and scope'),
+    ('note', 'Authority: authenticate RP; bind device policy, person level, origin and disclosure. RP stores the operation and creating Authority.'),
+    ('arrow', 3, 1, 'Return cid, C, authority, person_origin and negotiated markers'),
+    ('arrow', 1, 0, 'Return challenge; set __Host- state cookie'),
+    ('arrow', 0, 3, 'POST /attestation: cid, N, H1; RP Origin'),
+    ('arrow', 3, 4, 'LocalAPI status / whois'),
+    ('arrow', 4, 3, 'Device identity and tags'),
+    ('note', 'Authority: check base transcript and device policy; pending -> base_attested. Start the 120 s overall person window.'),
+    ('arrow', 3, 0, '202 step_up: private URL, handoff, completion'),
+    ('phase', '2. Verify the person inside the Authority frame'),
+    ('arrow', 0, 2, 'Embed person_origin/step-up/rp_id#handoff'),
+    ('note', 'Per-RP framing permits only the registered application. The frame checks support, strips the fragment and keeps tokens in memory. No embedder message API.'),
+    ('arrow', 2, 3, 'POST /step-up/handoff'),
+    ('note', 'Authority: recheck device; consume handoff; derive W from cid/H1/w; base_attested -> stepup_pending.'),
+    ('arrow', 3, 2, 'Attempt token and options'),
+    ('note', 'The person clicks the frame control. WebAuthn get() starts directly from the click with preloaded options and the Authority RP ID.'),
+    ('arrow', 2, 3, 'POST /step-up/assertion'),
+    ('note', 'Authority: check challenge, exact origin, embedding, subject, UP/UV and counter. Commit evidence and redeemable state atomically; collection is 30 s capped by overall deadline.'),
+    ('arrow', 3, 2, 'Success only'),
+    ('note', 'The frame never receives H2 or a ByteBind proof and sends no identity or messages to the application page. Enrollment uses separate top-level Authority pages.'),
+    ('phase', '3. Collect the one-use result and redeem'),
+    ('arrow', 0, 3, 'POST /attestation/result: cid, completion, N, H1; RP Origin'),
+    ('note', 'Pending: hold up to 10 s without LocalAPI work; return 202; poll at least 2 s apart. Ready: recheck device policy; reserve delivery and start 10 s redemption window before H2.'),
+    ('arrow', 3, 0, 'Pending 202, or one-use H2'),
+    ('note', 'Client: authenticate H2 and compute R using the ordinary base transcript.'),
+    ('arrow', 0, 1, 'POST /bytebind/proof: cid, R; state cookie and Origin'),
+    ('note', 'RP: check Origin, cookie and deadline; atomically claim ceremony before redemption.'),
+    ('arrow', 1, 3, 'POST /v1/redemption: cid, R, audience'),
+    ('note', 'Authority: recheck current device and person state; consume the transaction once.'),
+    ('arrow', 3, 1, 'Scoped claims and assurance; association for a person session'),
+    ('phase', '4. Enforce person assurance before the handler'),
+    ('outcome', 'Person session', 'Before each person handler, validate the lease-bound association with the Authority. Device renewal preserves original person age/deadline. Refusal requests fresh step-up; an outage fails closed.'),
+    ('outcome', 'Person transaction', 'Execute only the stored operation with its fresh assertion and route-authorized grant, at most once. A prior session assertion cannot replace this transaction assertion.'),
+]
+
+if __name__ == '__main__':
+    render(rows, [170, 575, 980, 1385, 1790],
+           ['Client on device D', 'Public RP', 'Authority frame', 'Private Authority', 'tailscaled'],
+           1960, 'ByteBind person handshake',
+           'Base first; Authority-owned passkey step-up; one-use result and scoped redemption',
+           'person-handshake.png')

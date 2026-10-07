@@ -14,6 +14,10 @@ For the developer, it’s an import, an app bind, and route binds. For the opera
 
 **The developer declares what’s protected. The operator declares who’s trusted. The user just opens the page.**
 
+That is the device-only flow. Some routes also need a person to participate.
+Specification 0.8 adds optional Authority-owned passkeys for those routes, with
+enrollment and an explicit presence or verification gesture.
+
 <video controls preload="metadata" playsinline poster="https://blog.bytes.coffee/media/bytebind-explainer-0097862c.jpg" style="width:100%;border-radius:12px" aria-label="ByteBind explainer video">
   <source src="https://blog.bytes.coffee/media/bytebind-explainer-0097862c.mp4" type="video/mp4">
   <a href="https://blog.bytes.coffee/media/bytebind-explainer-0097862c.mp4">Download the ByteBind explainer.</a>
@@ -49,7 +53,24 @@ The application still owns execution and recovery. If a response is lost after a
 
 ## What the device proves
 
-The exchange establishes participation through an authorized private-network device. It does not identify the person using that device. Applications needing explicit human approval can add a user-authentication step.
+The base exchange establishes participation through an authorized private-network
+device. It does not identify the person using that device. An application can
+require `presence` or `verification` assurance in its route binding. Base
+attestation still runs first; the private Authority then collects a passkey
+assertion in its own iframe before releasing the proof material.
+
+The Authority owns person subjects and passkey registration. A device's provider
+account or owner never supplies the current person identity. Shared devices and
+tagged service devices can therefore establish an independent human subject.
+Applications can receive a pairwise person identifier when the operator permits
+it. The iframe sends no identity or proof to the application page; claims arrive
+only through authenticated redemption.
+
+A person-verified session retains its original verification age while device
+leases renew. Each person-gated endpoint validates the association before its
+handler runs. A person-gated transaction requires a new assertion for that exact
+operation. Neither a passkey nor the device exchange proves that the person
+understood or intended the operation.
 
 An authorized device is a trust assumption. Compromising it, stealing the ceremony's secrets, or copying a valid session cookie weakens the guarantees. Short leases limit the useful lifetime of a copied session.
 
@@ -59,25 +80,43 @@ The intended experience is to open the management page and let the exchange happ
 
 OpenID Connect gives applications a standard way to accept identity from a trusted provider. In the familiar authorization-code flow, the browser visits that provider, the application exchanges a code, and an ID token communicates the authentication result. OIDC itself doesn’t require passwords or a visible login screen. [OpenID Connect specification](https://openid.net/specs/openid-connect-core-1_0.html).
 
-ByteBind addresses a narrower requirement: a public application needs fresh participation through an authorized private-network device before granting management access. Its native exchange happens in the background, without an OIDC redirect. The result authorizes a short lease or one specific request. It establishes device participation; identifying the person using that device requires an additional mechanism.
+ByteBind addresses a narrower requirement: a public application needs fresh
+participation through an authorized private-network device before granting
+management access. Its device-only exchange happens in the background, without
+an OIDC redirect. The result authorizes a short lease or one specific request.
+Person-gated routes add an Authority-owned passkey assertion while retaining
+the same device and transaction binding.
 
 [tsidp](https://tailscale.com/docs/features/tsidp) turns Tailscale identity into standard OIDC/OAuth credentials for applications that already support those protocols. It can eliminate authentication prompts too. Its value is compatibility with existing applications and their identity integrations.
 
 ByteBind’s focus is direct route protection, repeated private-network attestation, and transaction-bound authorization in applications adopting its bindings. Both aim to let users open an application without entering another password, but the integration and authorization model differ.
 
-An application could use tsidp for its user identity and require ByteBind for a privileged operation. The ByteBind draft also describes an optional OIDC bridge, though the reference implementation does not implement it. Neither arrangement implies an existing tsidp–ByteBind integration.
+An application could use tsidp for its user identity and require ByteBind for a
+privileged operation. Specification 0.8 defers OIDC/SAML integration; the
+reference implementation provides no OIDC bridge or tsidp integration.
 
 ## From TailBind to ByteBind
 
 The early drafts were called **TailBind** because the first provider was Tailscale. The protocol's actual dependency is broader: an authenticated private path, a reliable mapping from the connection to a device, and an authorization policy.
 
-I renamed it ByteBind in draft 0.6. The current specification is draft 0.7.
+I renamed it ByteBind in draft 0.6. The current specification is 0.8-draft,
+still protocol v1. Nothing has reached a stable release.
 
 Its cryptography uses HMAC-SHA256, HKDF-SHA256, and AES-256-GCM. The design work is in connecting the channels, scoping the authorization, and consuming transactions safely.
 
-The reference implementation has unit and integration coverage and has completed browser exchanges in the test setup. Real-tailnet identity and certificate behavior, cross-node control traffic, browser permissions, and independent security review remain outstanding. I am publishing the draft to get those assumptions examined.
+The experimental implementation has unit and integration coverage, including
+signed synthetic passkey assertions and both session and transaction flows.
+Real-tailnet identity and certificate behavior, cross-node control traffic,
+real-browser passkeys and permissions, and independent security review remain
+outstanding. Agent reviews have also identified implementation findings tracked
+in the roadmap. I am publishing the draft to get those assumptions examined.
 
-Read the [technical companion](https://blog.bytes.coffee/2026/10/bytebind-under-the-hood/) for the endpoint flow and cryptographic transcripts, or the [draft 0.7 specification](https://blog.bytes.coffee/extra/bytebind-spec-0.7.md) and [roadmap snapshot](https://blog.bytes.coffee/extra/bytebind-roadmap.md) for the details and open questions.
+Read the [technical companion](https://blog.bytes.coffee/2026/10/bytebind-under-the-hood/)
+for the original device exchange, the [current specification](https://github.com/BytesAndCoffee/bytebind/blob/main/SPEC.md)
+and [roadmap](https://github.com/BytesAndCoffee/bytebind/blob/main/docs/ROADMAP.md)
+for the protocol and open questions, or the [person setup guide](https://github.com/BytesAndCoffee/bytebind/blob/main/docs/PERSON-STEP-UP.md)
+for passkey registration and route bindings. The published
+[draft 0.7 snapshot](https://blog.bytes.coffee/extra/bytebind-spec-0.7.md) remains historical.
 
 This started with “how do I protect the management page for this server?” I am now considering an Internet-Draft as a way to get useful criticism of the answer.
 

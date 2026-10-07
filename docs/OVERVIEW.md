@@ -12,15 +12,26 @@ application redeems before granting access.
    control channel and returns its challenge to the browser.
 3. The browser posts a challenge MAC to the Authority's private `/attestation`
    endpoint. The Authority identifies the connecting device and checks policy.
-4. The Authority returns an encrypted secret. The browser uses it to compute a
+4. For a person-required route, base acceptance returns a one-use handoff.
+   The browser embeds the private Authority page, where the person clicks a
+   passkey control. The client collects the result through `/attestation/result`.
+   Device-only routes receive the result directly from `/attestation`.
+5. The Authority returns an encrypted secret. The browser uses it to compute a
    redemption MAC and submits that proof to the application.
-5. The application redeems the proof with the Authority, which consumes the
+6. The application redeems the proof with the Authority, which consumes the
    transaction and returns a scoped grant.
 
 The **session profile** creates a short lease, renewed by further exchanges.
 When private access is lost, renewals fail and the last lease expires. The
 **transaction-bound profile** includes a digest of a submitted operation and
 authorizes only that stored request.
+
+Optional `presence` and `verification` assurance use Authority-owned WebAuthn
+credentials. Person identity is independent of provider accounts and device
+ownership. Person session age never resets during device renewal; the application
+validates the association before each person-gated handler. A person-required
+transaction always needs a fresh assertion. Passkey registration and management
+happen on a separate private Authority listener.
 
 The proofs use HMAC-SHA256, the response key uses HKDF-SHA256, and the private
 response uses AES-256-GCM. Overlay identity and policy supply device authorization;
@@ -32,5 +43,6 @@ Independent security review and real-tailnet deployment checks remain open.
 
 See [SPEC.md](../SPEC.md) for fields and validation rules,
 [ROADMAP.md](ROADMAP.md) for verification status,
-[THREAT-MODEL.md](THREAT-MODEL.md) for threats and open risks, and
+[THREAT-MODEL.md](THREAT-MODEL.md) for threats and open risks,
+[PERSON-STEP-UP.md](PERSON-STEP-UP.md) for passkey setup, and
 [blog-post.md](blog-post.md) for the motivation.

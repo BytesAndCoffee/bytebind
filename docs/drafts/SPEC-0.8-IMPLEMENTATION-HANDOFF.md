@@ -2,12 +2,15 @@
 
 This implementation snapshot is committed on `main`. Nothing has been pushed.
 Protocol remains v1; package version is `0.8.0.dev0`.
+The initial snapshot is `a1e2b2e`; subsequent demo and dependency changes are
+recorded below. Claude's completed [implementation review](SPEC-0.8-IMPLEMENTATION-REVIEW.md)
+and the [current roadmap](../ROADMAP.md#open-implementation-findings) track open findings.
 
 ## Implemented
 
 - Authority-owned private person listener and per-RP iframe pages, after base
   attestation; warmed options and WebAuthn called directly from the click.
-- Pinned `fido2==2.0.0` verifier, ES256, exact RP ID/origin, embedding checks,
+- Pinned `fido2` verifier (initially 2.0.0, updated to 2.2.1 in `f6db83a`), ES256, exact RP ID/origin, embedding checks,
   independent user handles, UP/UV, conservative counters and revocation versions.
 - Hashed one-use handoffs, completion and management tokens; generation-checked
   state transitions, 120-second step-up, bounded collection, committed one-use
@@ -44,14 +47,14 @@ base/proof caps remain. Inspect the closed-schema checks at each entry point.
 
 ## Verification and remaining gates
 
-224 tests passed, including real ES256 signed synthetic authenticator responses,
+At the initial snapshot, 224 tests passed, including real ES256 signed synthetic authenticator responses,
 both adapters, renewal, outage, disclosure, replay, counter regression, concurrent
 assertion/delivery and enrollment quotas. The base vectors still reproduce;
 `test-vectors/bytebind-v1-person.json` adds W and a UTF-8 pairwise-subject vector.
 A wheel builds and contains both scripts and the person modules.
 
-No real-browser/private-HTTPS acceptance or independent implementation review
-has been completed. Permissions-Policy names and actual subframe behavior remain
+No real-browser/private-HTTPS acceptance or independent security review
+has been completed. Claude's agent review is recorded separately. Permissions-Policy names and actual subframe behavior remain
 provisional. Enrollment invite delivery is the operator's trusted channel;
 existing-subject recovery has no enabled path. See `docs/ROADMAP.md`.
 
@@ -65,9 +68,9 @@ snapshots; they do not attest to this code. Record findings in a new review file
 and preserve the existing review history. Coordinate before editing files that
 are still being changed.
 
-SPEC.md's implementation-status paragraph changed; its normative requirements
-are unchanged. The current snapshot hash in the review notes was updated for
-that paragraph change.
+SPEC.md's implementation-status paragraph and nonnormative binding-example label
+changed; its normative requirements are unchanged. The current snapshot hash in
+the review notes includes those changes.
 
 ## Demo follow-up (separate commit)
 
@@ -86,3 +89,21 @@ now requests fresh step-up; transport failure/Authority outage still refuses
 with 503. Review that small `require_person` change with the demo additions.
 The browser iframe is also sized to keep its verification controls visible.
 The full suite passes with 230 tests after these additions.
+
+## RP example and documentation follow-up
+
+`a44e0a6` adds registration links, `/verified`, and `/restart-verified` to
+`examples/rp_app.py`, while preserving the device-only `/status` and `/restart`
+routes. Its signed HTTP integration test covers enrollment, session verification,
+fresh transaction verification and replay refusal. With `fido2==2.2.1`, the full
+suite passes 231 tests on macOS.
+
+Setup docs now explain `BYTEBIND_AUTHORITY_UID` for separate Unix service accounts
+and the current same-account default. The README, overview, person guide, threat
+model, roadmap, examples and local blog source now reflect the implemented flow.
+Both device-only and person handshake charts are rendered as images.
+
+F1's invalid-context erasure and F3's session maximum-age selection remain code
+work. Explicit UID startup enforcement, result-poll connection reuse, operator
+burn generation handling and direct discovery-client pin lifetime also remain
+open. These documentation changes do not close those findings.

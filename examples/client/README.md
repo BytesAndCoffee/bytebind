@@ -5,6 +5,12 @@
 - `api.get("/status")` uses a session lease, established and renewed by the client.
 - `api.transaction("/restart", json={"service": "demo"})` approves one exact request.
 
+Those two routes remain device-only. The same app also has `/verified` and
+`/restart-verified` for browser passkey step-up, with registration links at
+`/passkeys`. Calling a person-required route from this headless client raises
+`bytebind.requests.StepUpRequired`; it carries no handoff token or URL and does
+not open a browser, weaken assurance or retry the operation.
+
 The client is a `requests.Session` subclass and returns ordinary
 `requests.Response` objects.
 

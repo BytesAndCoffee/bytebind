@@ -88,6 +88,10 @@ Use the demo host's stable node ID (`Self.ID` in `tailscale status --json`),
 not its hostname, IP address, or node public key. For a same-host Unix control
 listener, replace `tailnet_node` with `unix_uid` set to the demo process's numeric
 UID. Restart the Authority listeners after changing their registration config.
+For Unix control, also set `BYTEBIND_AUTHORITY_UID` in the demo process to the
+Authority account's numeric UID. The RP verifies the socket owner and server's
+peer credentials. Its current default is its own effective UID, so a separate
+Authority account needs this setting even when the socket is autodiscovered.
 
 Your browser's device must carry `tag:admin`; the Authority must include `tags`
 in its grant claims, as shown. Tagging a device in Tailscale changes its
@@ -231,6 +235,10 @@ access to home directories; keep the checkout outside `/home`, or relax
 Authority on the same host, register this account's UID rather than your shell
 account's UID. To use another install path, edit `WorkingDirectory` and
 `ExecStart` in the unit.
+
+If the Authority uses a different account, uncomment and set
+`BYTEBIND_AUTHORITY_UID` in `/etc/bytebind-demo.env`. The RP also needs ordinary
+filesystem permission to traverse the socket directory and connect to the socket.
 
 ## Check it
 

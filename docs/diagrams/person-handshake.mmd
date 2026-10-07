@@ -1,0 +1,51 @@
+sequenceDiagram
+    autonumber
+    participant C as Client on device D
+    participant RP as Public RP
+    participant W as Authority-origin frame
+    participant A as Private Authority
+    participant TS as tailscaled
+
+    C->>RP: Request person session or submit person transaction
+    RP->>A: POST /v1/transaction: protocol=1, draft=0.8, audience, profile, assurance, Q/lease scope
+    Note over A: Authenticate RP; bind device policy, person level, origin and disclosure
+    A-->>RP: cid, C, authority, person_origin, negotiated markers
+    RP-->>C: Challenge; set __Host- state cookie
+    C->>A: POST /attestation: cid, N, H1; RP Origin
+    A->>TS: LocalAPI status/whois for socket peer
+    TS-->>A: Device identity and tags
+    Note over A: Check base transcript and device policy<br/>pending → base_attested; start 120 s overall window
+    A-->>C: 202 step_up: url, one-use handoff, completion
+
+    C->>W: Embed person_origin/step-up/rp_id#handoff
+    Note over W: Per-RP frame-ancestors; no message API<br/>Check support; strip fragment; tokens stay in memory
+    W->>A: POST /step-up/handoff: handoff, rp_id; Authority Origin
+    Note over A: Recheck device; consume handoff<br/>base_attested → stepup_pending; derive W from cid/H1/w
+    A-->>W: Attempt token and preloaded passkey options
+    Note over W: Person clicks frame control; invoke WebAuthn directly
+    W->>A: POST /step-up/assertion: credential; attempt header
+    Note over A: Verify challenge, origin, crossOrigin/topOrigin, subject, UP/UV and counter<br/>Commit evidence atomically; stepup_pending → redeemable<br/>Start 30 s collection window capped by overall deadline
+    A-->>W: Success only; no H2, proof or RP identity claims
+
+    loop One held request at most 10 s; polls at least 2 s apart
+        C->>A: POST /attestation/result: cid, completion, N, H1; RP Origin
+        Note over A: Pending: no LocalAPI call<br/>Ready: recheck device policy; reserve delivery<br/>Start 10 s redemption window before H2
+        A-->>C: Pending 202, or one-use H2 when ready
+    end
+    Note over C: Authenticate H2 and compute R using the ordinary base transcript
+    C->>RP: POST /bytebind/proof: cid, R; state cookie and Origin
+    Note over RP: Check Origin, cookie and deadline; claim ceremony atomically
+    RP->>A: POST /v1/redemption: cid, R, audience
+    Note over A: Recheck current device/person state; redeem once
+    A-->>RP: Scoped claims and structured assurance; session association when applicable
+    alt Person session
+        RP-->>C: Lease cookie and application response
+        C->>RP: Person-gated endpoint
+        RP->>A: POST /v1/person-validation with lease-bound handles
+        A-->>RP: Active assurance or refusal
+        RP-->>C: Handler response or fresh step-up; outage fails closed
+        Note over RP: Device renewal preserves original person age and deadline
+    else Person transaction
+        Note over RP: Execute only stored operation with fresh verified grant, at most once
+        RP-->>C: Operation response
+    end

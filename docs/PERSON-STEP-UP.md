@@ -97,6 +97,11 @@ evidence, revoked credentials, suspended subjects or lost device continuity
 require fresh step-up. An Authority outage refuses the person-gated call.
 Transaction-bound person operations always require a fresh assertion.
 
+Two conformance findings remain open: a refused association is not yet erased
+from RP storage, and session creation currently uses the requested route's
+maximum age rather than the largest route maximum. Refusal still prevents the
+person handler and requests fresh step-up. See [the implementation findings](ROADMAP.md#open-implementation-findings).
+
 App-facing lease objects contain claims and assurance, without internal
 association handles, device-grant references or lease deadlines. A headless
 Python or requests client encountering person step-up raises `StepUpRequired`;
@@ -107,3 +112,14 @@ Existing draft-0.7 pending transactions cannot resume after the schema upgrade.
 Old transaction rows are retained separately as `transactions_v07`; begin a new
 ceremony. The Authority database contains credential and subject state and must
 remain owned and writable only by the Authority service account.
+
+For same-host Unix control under separate accounts, set
+`BYTEBIND_AUTHORITY_UID` in the RP to the Authority account's numeric UID. Direct
+`AuthorityClient` callers use `authority_uid=`. The RP checks socket ownership,
+parent-directory policy and kernel-reported server identity; the current default
+UID is the RP process's effective UID.
+
+The [RP example](../examples/rp_app.py) exposes `/passkeys`, `/verified` and
+`/restart-verified`. Its registration links use `BYTEBIND_PERSON_ORIGIN`; step-up
+uses the authenticated Authority transaction's origin. The [packaged demo](../examples/demo/README.md)
+has the corresponding `/passkeys`, `/verified` and `/api/person/approve` flows.

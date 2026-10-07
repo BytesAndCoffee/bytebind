@@ -6,17 +6,18 @@
 history at commit `3072234`; the pre-consolidation drafts are in commit `21c290d`.
 **Final review:** [SPEC-0.8-CLAUDE-FINAL-REVIEW.md](SPEC-0.8-CLAUDE-FINAL-REVIEW.md).
 
-Current spec SHA-256: `eb7e002dc8903985f00118d6c55e81be37183f871dfc9f3f53a60ccd4a0c929a`.
+Current spec SHA-256: `eaf587bece7a0178a55226f31ebe68ec371b4ae6f04b9b252ee0b4b8acd263aa`.
 This is a snapshot identifier; if the spec changes, review the delta and update
 this value. Nothing in these notes establishes runtime or browser support.
 
 ## Whole-protocol consolidation
 
 The user requires draft 0.8 to specify the entire protocol, not a step-up
-revision that incorporates 0.7 by reference. The base ceremony is now included
-in sections 2–8; provider/browser/storage rules are in sections 19–24. The
-reviewed person design is retained in sections 9–18. Shared security, release
-gates, and hardening are in sections 25–29.
+revision that incorporates 0.7 by reference. In the consolidated SPEC.md, the
+base ceremony is in sections 2–9, the reviewed person design in sections 10–17,
+and application behavior in section 18. Provider/browser/storage rules are in
+sections 19–21; security and test-vector/status rules are in sections 22–23.
+Release gates and hardening work are tracked in ROADMAP.md.
 
 Reconciliations: base attestation records `base_attested`; only `redeemable`
 transactions with committed delivery may redeem. Redemption starts at first
@@ -202,8 +203,14 @@ traced against them, and its content is reflected in the final review.
 
 ## Implementation follow-up
 
-The implementation work updates only the specification status paragraph; the
+The implementation work updates the specification status paragraph and the
+nonnormative binding-example label; the
 reviewed normative protocol text is unchanged. The historical review confirms
 the design, not the new code. Signed synthetic-authenticator and adapter tests
 exercise the experimental implementation; real-browser acceptance, independent
-implementation review and recovery approval remain open in ROADMAP.md.
+security review and recovery approval remain open in ROADMAP.md. Claude's
+[implementation review](SPEC-0.8-IMPLEMENTATION-REVIEW.md) is an agent review with
+open findings. The run through `a44e0a6` passes 231 tests on macOS using
+`fido2==2.2.1`. The [handoff](SPEC-0.8-IMPLEMENTATION-HANDOFF.md) records the demo
+and documentation follow-ups; historical review records below retain their
+original snapshot claims.

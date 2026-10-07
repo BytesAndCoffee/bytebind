@@ -998,8 +998,7 @@ now.
 
 ## 18. Application and client behavior
 
-Bindings separate device claims from assurance (illustrative, not an
-implemented API):
+The experimental FastAPI and Flask bindings separate device claims from assurance:
 
 ```python
 @bind(require=["tag:interactive"], assurance="verification", person_max_age=300)

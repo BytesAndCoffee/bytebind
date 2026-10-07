@@ -6,8 +6,27 @@
 optional Authority-owned WebAuthn person step-up. The reference implementation
 now implements the base exchange and optional person step-up, with signed
 synthetic-authenticator tests. Real private-HTTPS browser acceptance, independent
-review, and recovery approval remain open. Draft 0.7 is in git `3072234`. Review records are in
+review, and recovery approval remain open. Draft 0.7 is in git `3072234`. Design review records are in
 [drafts/SPEC-0.8-REVIEW-NOTES.md](drafts/SPEC-0.8-REVIEW-NOTES.md).
+The [implementation review](drafts/SPEC-0.8-IMPLEMENTATION-REVIEW.md) records open
+findings against `a1e2b2e`, with subsequent fixes noted separately.
+
+### Open implementation findings
+
+- **F1:** a validation refusal now requests fresh step-up, but the RP still needs
+  to erase the invalid person context from storage so renewal cannot carry it.
+  Add coverage across both bindings.
+- **F2:** same-host RPs must configure `BYTEBIND_AUTHORITY_UID` when the Authority
+  uses a different account. Setup docs now explain it; requiring an explicit UID
+  with a clear startup error remains a proposed improvement.
+- **F3:** session creation currently uses the requested route's maximum age,
+  rather than the largest registered route maximum required by SPEC.md §17.3.
+- **F4/F8/F9:** result-poll connection overhead, generation rules for operator
+  revocation, and direct discovery-client pin lifetime need follow-up. The
+  bindings persist Authority pins, but direct discovering-client redemption is
+  tied to its single-process in-memory map.
+
+These findings remain open; documentation updates do not resolve code requirements.
 
 ### Release gates
 
@@ -26,6 +45,8 @@ review, and recovery approval remain open. Draft 0.7 is in git `3072234`. Review
    - the unsupported-browser message;
    - result long-polling;
    - synced and discoverable credentials;
+   - ES256-only enrollment, including refusal of RS256-only authenticators;
+   - whether each browser returns the required `credProps.rk === true` extension;
    - multiple subjects on one device, and multiple devices for one subject;
    - cancellation and tab closure.
 
@@ -41,8 +62,8 @@ review, and recovery approval remain open. Draft 0.7 is in git `3072234`. Review
 5. **Person associations:** handle lifecycle, exact lease binding, logout,
    revocation generations, maximum-age enforcement, device continuity without
    identifier disclosure, and atomic invalidation.
-6. **Verifier dependency:** evaluate [Yubico python-fido2](https://developers.yubico.com/python-fido2/)
-   (preferred) and Duo py_webauthn. Check the verification API, algorithms,
+6. **Verifier dependency:** the implementation pins [Yubico python-fido2](https://developers.yubico.com/python-fido2/)
+   at 2.2.1. Review the verification API, algorithms,
    user-handle checks, counter and backup handling, parsing limits, security
    history, and license. Authority-only; no custom CBOR/COSE or signature
    verification.
@@ -99,37 +120,38 @@ review, and recovery approval remain open. Draft 0.7 is in git `3072234`. Review
   - no assurance downgrade;
   - labels outside the v1 set refused.
 
-### Demo plan
+### Examples and diagrams
 
-`/admin` device-only; `/admin/verified` bounded person verification;
-`/admin/destructive-demo` a fresh verified transaction. Enrollment and
-management are Authority-hosted top-level pages showing the subject and
-friendly credential names, with device context kept separate.
+The [packaged demo](../examples/demo/README.md) offers `/admin` for device access,
+`/passkeys` for private Authority registration links, `/verified` for bounded
+person verification and `/api/person/approve` for a fresh verified transaction.
+The [RP example](../examples/rp_app.py) keeps `/status` and `/restart` device-only,
+and adds `/passkeys`, `/verified` and `/restart-verified`.
 
-After approval, update README, the demo, the blog, and the handshake chart: a
-separate draft-0.8 chart shows `person_origin` and the 202/poll loop.
+Enrollment and management are top-level Authority pages; the application receives
+neither invite tokens nor credential material. The base handshake chart is
+device-only; the person sequence is shown separately in the threat model.
 
 ## Authority discovery
 
 
-A relying-party package on an overlay-connected machine could discover
-Authorities and select one when creating a transaction.
+A relying-party package on an overlay-connected machine discovers one Authority
+when creating a transaction, or uses a configured HTTPS/Unix endpoint.
 
-Discovery must authenticate each candidate through a dedicated Authority tag,
-restricted tag ownership, overlay identity lookup, and certificate validation.
+Discovery uses the dedicated Authority tag or capability, overlay metadata and
+certificate validation. Restricted tag/capability ownership defines which
+operators may advertise an Authority.
 An accepted Authority is trusted to issue grants, so discovery policy is part
 of the authorization boundary.
 
-The RP records which Authority created each `cid`. Transaction creation,
+The RP records the creating endpoint for each `cid`. Transaction creation,
 browser attestation, and redemption must reach that same Authority. Failover
 requires defined behavior for its pending transactions.
 
-Authorities need consistent authorization policy. Random selection can distribute
-load, but selecting among inconsistent policies lets clients retry against a
-more permissive node.
-
-Implementation work: a selection layer in `AuthorityClient`, per-transaction
-routing, and tests for untrusted candidates, policy disagreement, and outages.
+Zero or multiple matching Authorities fail closed. Random selection and failover
+are not implemented. Multi-Authority deployment still needs credential/state
+ownership rules and consistent authorization policy before selection or failover
+can be claimed.
 
 ## Questions for the Tailscale community
 
@@ -142,8 +164,6 @@ routing, and tests for untrusted candidates, policy disagreement, and outages.
 
 ## Design decisions still open
 
-- **Tag matching:** specify whether required tags mean any or all. The reference
-  implementation makes this an RP setting, defaulting to any.
 - **Specification license:** the code is MIT; the specification is currently
   copyright with no reuse license. Consider CC BY 4.0. An IETF submission would
   have its own publication terms.
@@ -154,7 +174,18 @@ routing, and tests for untrusted candidates, policy disagreement, and outages.
 
 ## Recorded verification results
 
-The existing project record reports:
+The current recorded run through `a44e0a6` reports:
+
+- 231 passing tests on macOS with the pinned `fido2==2.2.1` verifier, including
+  both bindings, both headless clients, signed synthetic passkey assertions,
+  independent subject enrollment, revocation, renewal, outage and concurrent
+  assertion/delivery/quota checks.
+- Successful wheel construction and inclusion of both browser scripts and the
+  person modules at the initial implementation snapshot.
+- Real local Unix-socket control exchanges with kernel-reported RP and Authority
+  peer credentials. Tailnet identity is supplied by test directories.
+
+The earlier device-only project record reports:
 
 - 96 unit and integration tests covering hostile inputs, control transports,
   Unix-socket peer credentials, races, and clock skew.
@@ -170,6 +201,6 @@ and independent review still required.
 - Real `tailscaled` LocalAPI responses; current tests use recorded shapes.
 - Real tailnet listeners and `tailscale cert` certificates.
 - HTTPS control traffic between two tailnet nodes.
-- macOS and BSD peer credentials; execution so far covers Linux.
+- BSD peer credentials; local socket tests now also run on macOS.
 - Browser local-network access permissions on supported versions.
 - Independent review of the protocol and reference implementation.

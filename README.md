@@ -8,6 +8,9 @@ For the developer, it’s an import, an app bind, and route binds. For the opera
 
 **The developer declares what’s protected. The operator declares who’s trusted. The user just opens the page.**
 
+That describes device-only access. A route requiring person presence or
+verification adds Authority-managed passkey enrollment and an explicit user action.
+
 ByteBind authorizes management access to a public application through a fresh
 exchange involving an allowed private-overlay device. The browser obtains a
 challenge from the application, completes private attestation, and returns a
@@ -17,8 +20,9 @@ proof for one-time redemption.
   implementation includes optional Authority-owned passkey step-up.
 - **[docs/blog-post.md](docs/blog-post.md):** why it exists, in plain language.
 - **[docs/OVERVIEW.md](docs/OVERVIEW.md):** the exchange in one paragraph.
-- **[docs/ROADMAP.md](docs/ROADMAP.md):** what's planned for draft 0.8, open questions, and what is and isn't verified.
+- **[docs/ROADMAP.md](docs/ROADMAP.md):** implemented features, open findings, and release gates.
 - **[test-vectors/bytebind-v1.json](test-vectors/bytebind-v1.json):** byte-exact vectors for both profiles.
+- **[Person vectors](test-vectors/bytebind-v1-person.json):** the person challenge and pairwise subject encoding.
 
 This repository is the reference implementation, in Python with a dependency-free
 browser client. It targets draft 0.8 and uses Tailscale as the attestation provider.
@@ -27,7 +31,7 @@ Optional person-gated routes require a passkey ceremony. See
 [person step-up setup](docs/PERSON-STEP-UP.md) for enrollment, route bindings,
 renewal behavior, and the remaining browser acceptance work.
 
-> **Status:** draft protocol, unreviewed implementation. Do not rely on it to
+> **Status:** experimental draft implementation with agent reviews and open findings. Do not rely on it to
 > protect anything important until it has had an independent security review.
 
 ## Examples and demos
@@ -87,9 +91,17 @@ so Secure cookies and WebCrypto work.
 |---|---|---|
 | Browser → RP | Application-defined access POST | Challenge for a new transaction |
 | RP → Authority | Control POST `/v1/transaction` | RP-scoped transaction material |
-| Browser → Authority | Private POST `/attestation` | Encrypted attestation secret |
+| Browser → Authority | Private POST `/attestation` | Encrypted secret, or 202 with a person step-up handoff |
+| Browser → Authority person listener | Handoff exchange and passkey assertion, when required | Stored person assurance; no proof or identity sent to the RP page |
+| Browser → Authority | Private POST `/attestation/result`, after step-up | Pending response or one-use encrypted attestation secret |
 | Browser → RP | Application-defined proof POST | Lease or operation result after redemption |
 | RP → Authority | Control POST `/v1/redemption` | Scoped authorization grant |
+| RP → Authority | Control POST `/v1/person-validation`, before a person-gated handler | Current association status or refusal |
+
+Device-only attestation returns H2 directly. Person-required attestation returns
+202 with a handoff to the private Authority iframe; H2 becomes collectible only
+after the required assertion succeeds. Person sessions preserve their original
+age during device renewal; a person-gated transaction always needs a fresh assertion.
 
 The **session profile** grants a short lease, renewed every 60 seconds. Losing
 private access stops renewals; the last accepted lease determines remaining
@@ -108,6 +120,8 @@ for public-to-private requests; real deployment behavior remains a testing item.
 | `src/bytebind/store.py` | The Authority's transaction store: single-use, conditional state transitions |
 | `src/bytebind/tailscale.py` | The Tailscale attestation provider (LocalAPI `status` and `whois`) and policy |
 | `src/bytebind/authority.py` | The Authority: attest service, and the control channel over a Unix socket or tailnet HTTPS |
+| `src/bytebind/person.py` | Authority-owned subjects, passkeys, verifier, enrollment and management |
+| `src/bytebind/person_http.py` | Separate private HTTPS person listener and per-RP iframe pages |
 | `src/bytebind/config.py` | Authority configuration (TOML), validated at startup |
 | `src/bytebind/binding.py` | What the web bindings share: requirements, stored requests, the renewal script, RP configuration |
 | `src/bytebind/fastapi.py` | FastAPI binding: route protection, leases and transaction grants, mounted endpoints, and browser injection |
@@ -119,21 +133,27 @@ for public-to-private requests; real deployment behavior remains a testing item.
 | `src/bytebind/client.py` | HTTPX API client for session leases and transaction-bound operations |
 | `src/bytebind/requests.py` | Requests Session with the same ceremony and both profiles |
 | `src/bytebind/web/bytebind.js` | The browser client (WebCrypto only) |
+| `src/bytebind/web/person.js` | Authority-origin passkey controls; no message API to the RP page |
 | `examples/` | Relying-party examples, Authority configuration, and nginx/systemd demo setup |
 | `scripts/make_vectors.py` | Regenerates the test vectors |
 
 ## Running an Authority
 
-The Authority runs as up to three narrowly scoped listeners, all from one config
+The Authority has a base attestation listener, optional person listener, and
+Unix and/or HTTPS control listeners, all from one config
 file (see [examples/authority.toml](examples/authority.toml)):
 
 ```bash
-pip install .
+pip install '.[person]'  # use plain '.' for a device-only Authority
 
 # Browser attestation: use the tailnet IP and a valid TLS certificate.
 # Preserve the accepted connection's device identity.
 bytebind-authority --config authority.toml attest \
   --host 100.x.y.z --port 8443 --certfile attest.crt --keyfile attest.key
+
+# Optional person listener: registration, management, and iframe step-up.
+bytebind-authority --config authority.toml person \
+  --host 100.x.y.z --port 8444 --certfile person.crt --keyfile person.key
 
 # Control channel for RPs on the same host: a Unix socket. Each RP is identified
 # by the kernel-reported user ID of the connecting process.
@@ -145,7 +165,11 @@ bytebind-authority --config authority.toml control-https \
 ```
 
 The socket's directory must be owned by the Authority's account and not group-
-or world-writable; the Authority refuses to start otherwise.
+or world-writable; the Authority refuses to start otherwise. RPs verify socket
+ownership and the server's kernel-reported UID on every connection. For separate
+Authority and RP accounts, set `BYTEBIND_AUTHORITY_UID` in the RP process to the
+Authority account's numeric UID. The current default is the RP process's own
+effective UID, suitable only when both processes use that same account.
 
 ## Using it from a relying party
 
@@ -187,10 +211,14 @@ with `tag:bytebind-authority` or the node capability
 `bytebind.example/authority`. Tag-only discovery uses its MagicDNS name and
 HTTPS port 9443. TLS certificate verification remains enabled. Shared, expired,
 and offline nodes are excluded; zero or multiple matches fail closed with 503.
-Discovery runs at each transaction creation and redemption, with no automatic replay or failover.
+Discovery runs at transaction creation. The RP stores the creating Authority's
+endpoint and uses it for redemption and association validation, with no automatic
+replay or failover. Advertised capabilities do not substitute for authenticated
+draft and assurance negotiation.
 
-Set `BYTEBIND_AUTHORITY` to override discovery explicitly. Set
-`BYTEBIND_ORIGIN` to the public origin,
+Set `BYTEBIND_AUTHORITY` to override discovery explicitly and
+`BYTEBIND_AUTHORITY_UID` for a Unix Authority running under a different account.
+Set `BYTEBIND_ORIGIN` to the public origin,
 `BYTEBIND_AUDIENCE` (default: `manage`), and `BYTEBIND_RP_DB` to a writable
 SQLite path (default: `bytebind-rp.sqlite3`). These also have explicit constructor
 keywords: `authority`, `origin`, `audience`, and `database`; `rp` accepts an
@@ -246,6 +274,32 @@ renewal script is injected only into protected HTML responses; public pages
 never contact the Authority. Injection buffers uncompressed HTML responses and
 uses inline JavaScript, so streaming HTML and strict CSP deployments should
 account for that behavior.
+
+### Person presence and verification
+
+Both bindings support `assurance="presence"` or `assurance="verification"`.
+The Authority registration must permit the requested level. For session routes,
+`person_max_age=` bounds the age; `identify=True` additionally requests a pairwise
+`person_subject`, permitted separately by the registration's claims. Device-tag
+requirements still apply. For example:
+
+```python
+@app.get("/account")
+@bind(require=["tag:interactive"], assurance="verification", person_max_age=300, identify=True)
+async def account(lease=bind.lease):
+    return {"person": lease.claims["person_subject"]}
+
+@app.post("/approve")
+@bind(require=["tag:interactive"], grant=bind.TRANSACTION, assurance="verification")
+async def approve(grant=bind.grant):
+    return {"approved": True}
+```
+
+The person listener owns enrollment and verification. Its iframe receives no
+base-attestation proof and sends no messages or identity to the application page.
+See [person setup](docs/PERSON-STEP-UP.md) for invites, private HTTPS, enrollment
+policy and the open conformance findings. The [RP example](examples/rp_app.py)
+provides `/passkeys`, `/verified` and `/restart-verified`.
 
 ### Flask
 
@@ -305,6 +359,9 @@ Responses are ordinary HTTPX responses; call `raise_for_status()` to check the
 application result. Ceremony failures raise `bytebind.client.ClientError` with
 `step` and `status` (absent for network or protocol failures).
 
+Person-required routes raise `bytebind.client.StepUpRequired`. It carries no
+handoff URL or token and does not open a browser or retry the operation.
+
 The client sends the app's Origin header and maintains its state/session cookies.
 Attestation uses a separate connection without application cookies or credentials.
 TLS verification stays enabled; environment proxies are ignored. URLs must remain
@@ -351,6 +408,8 @@ query parameters, and Requests' buffered multipart bodies. Streaming request
 bodies are rejected. Calls on one session are serialized; calling `send()`
 directly does not acquire or renew a lease. Ceremony/network failures raise
 `bytebind.requests.ClientError`; application HTTP errors remain in the response.
+Person-required routes raise `bytebind.requests.StepUpRequired` with the same
+headless behavior as the HTTPX backend.
 
 Redirects stay disabled even when `allow_redirects=True` is supplied. TLS
 verification cannot be disabled, environment proxies and netrc are ignored, and
@@ -370,7 +429,7 @@ The lower-level API remains available:
 from bytebind.rp import AuthorityClient, RelyingParty
 
 rp = RelyingParty(
-    AuthorityClient("unix:/run/bytebind/control.sock"),   # or https://authority.tailnet.ts.net:9443
+    AuthorityClient("unix:/run/bytebind/control.sock", authority_uid=997),  # replace with Authority UID
     origin="https://app.example.com",
     audience="manage",
     database="/var/lib/app/bytebind-rp.sqlite3",
@@ -398,9 +457,13 @@ python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 ```
 
 The suite covers the published vectors (Python and, when Node is installed, the
-browser client), every attest check in SPEC.md 11.1 with hostile inputs, both
+browser client), every base attestation check in SPEC.md §7.1 with hostile inputs, both
 control transports with real Unix-socket peer credentials, cross-RP isolation,
 the state machine and its races, lease capping, and the complete exchange end to end.
+Signed synthetic authenticators exercise the pinned passkey verifier, enrollment,
+person sessions, revocation, and fresh transaction assertions. The recorded run
+through `a44e0a6` passes 231 tests on macOS with `fido2==2.2.1`; real-browser
+private-HTTPS acceptance and independent security review remain open.
 
 ## License
 
