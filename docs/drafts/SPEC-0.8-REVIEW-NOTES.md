@@ -6,7 +6,7 @@
 history at commit `3072234`; the pre-consolidation drafts are in commit `21c290d`.
 **Final review:** [SPEC-0.8-CLAUDE-FINAL-REVIEW.md](SPEC-0.8-CLAUDE-FINAL-REVIEW.md).
 
-Current spec SHA-256: `c649e4c09ca921e7c3f32de3ceccdbbd8360b2dd9a1e969aa64f52064a036cd5`.
+Current spec SHA-256: `f3047f06301b47e0b36fb10d5d81b038ea42f998f904f7a14a600ba803d38d2f`.
 This is a snapshot identifier; if the spec changes, review the delta and update
 this value. Nothing in these notes establishes runtime or browser support.
 
@@ -164,3 +164,38 @@ Following the final review and the user's decisions:
 The sections above ("Current decisions", "Remaining issue", "Release gates",
 "Instructions for Claude's final look") are historical. The enumeration issue
 is resolved, and the live gates are in ROADMAP.
+
+## Codex consolidation follow-up (2026-10-06)
+
+Restored two requirements weakened by the trim: global person identifiers and
+global names require separate explicit operator disclosure permission (§16),
+and session application responses must disclose neither lease expiry nor
+remaining time (§17.2). The spec hash above includes these corrections.
+
+The consolidation review checked the spec hash, JSON examples, and live local
+links. The full existing test suite passed before these two documentation-only
+corrections, using the existing test environment outside the socket-restricted
+sandbox. No implementation changes were made.
+
+## Claude follow-up to Codex's catches (2026-10-06)
+
+Codex's two findings prompted a stricter trace (every MUST/NEVER sentence of the
+round-3 spec at `21c290d` and of draft 0.7 at `3072234`, matched below 0.8
+token overlap). It found ten more requirements that had been weakened to plain
+description or had lost a detail. All are restored in `SPEC.md`:
+
+- applications MUST NOT assume device identity shows the person present (0.7 §18; spec §2.2);
+- the RP MUST verify the Unix socket's ownership and access policy (§3.2);
+- leases MUST NOT outlast their grant, which also corrects "MAY outlast" (§9.2);
+- clients MUST send attestation directly to the Authority (§7);
+- the iframe MUST show its own control and MUST call `get()` from its activation (§11.3);
+- tokens MUST NOT be included in analytics (§12);
+- challenge-linked fields MUST NOT change after options are issued (§13);
+- invites MUST be delivered out of band, redacted, and consumed only from an enrollment context (§15);
+- omitted disclosure permission MUST NOT be treated as permission (§16);
+- a write lock MUST NOT be held across provider or verifier calls (§7.2).
+
+Provenance gap: Codex's 2,140-line standalone draft (`9e98dccb…`), which the
+consolidation trimmed, was never committed or archived. Claude removed it without
+snapshotting it. Its inputs are in git (`21c290d`, `3072234`), the trim is
+traced against them, and its content is reflected in the final review.

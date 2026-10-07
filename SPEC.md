@@ -62,8 +62,9 @@ The Authority, registered RP, overlay identity service, and authorized device
 are trusted for their roles. Whoever controls the Authority's provider tag or
 capability is an approved operator. Device attestation establishes device-backed
 participation, not the current person. Applications that need person presence or
-verification MUST request the corresponding assurance (section 10). Neither
-device nor person assurance proves informed approval of a transaction.
+verification MUST request the corresponding assurance (section 10), and MUST NOT
+assume that device identity shows which person is present. Neither device nor
+person assurance proves informed approval of a transaction.
 
 The challenge and attestation secrets are transferable. Possessing them doesn't
 identify a browser process or prevent deliberate relay by an authorized
@@ -112,7 +113,8 @@ defined:
   - On every connection, the RP MUST verify the Authority's peer credentials
     against a configured Authority UID, and MUST verify that the containing
     directory is owned by root or that UID and isn't writable by other
-    accounts. A socket path's existence authenticates neither party.
+    accounts, and MUST verify the socket's ownership and access policy. A
+    socket path's existence authenticates neither party.
 
 Transport identity MUST map unambiguously to one registered RP. Several RPs
 sharing a node or UID need a per-RP credential or an equivalent independently
@@ -333,7 +335,7 @@ or for the transaction-bound profile:
 H1 = HMAC-SHA256(key = C, data = "bytebind/v1/tx/h1" || cid || N || Q)
 ```
 
-It sends, directly to the Authority:
+It MUST send the request directly to the Authority:
 
 ```http
 POST /attestation
@@ -380,7 +382,7 @@ that lost a race MUST NOT burn the winner's newer state.
 
 Every transition is a single conditional update on expected state **and**
 generation that must change exactly one row; that update is the concurrency
-protection. No write lock may be held across provider or verifier calls.
+protection. A write lock MUST NOT be held across provider or verifier calls.
 
 ```sql
 UPDATE challenges
@@ -469,8 +471,9 @@ creation, and MUST identify `protocol: 1`:
 
 Section 16 defines the person members of `assurance` and the disclosure rules.
 The RP MUST validate the grant before applying it. `expires_in` is seconds from
-receipt, measured on the RP's clock. Nothing derived from a grant MAY outlast
-it, and a grant MUST NOT carry absolute timestamps.
+receipt, measured on the RP's clock. A lease or other authority derived from a
+grant MUST NOT outlast it; the RP MAY end it sooner. A grant MUST NOT carry
+absolute timestamps.
 
 ### 9.3 Application response
 
@@ -621,10 +624,10 @@ Before exchanging the handoff, the page MUST check that the WebAuthn API is
 present and, where the browser exposes it, that `publickey-credentials-get` is
 allowed. If either check fails it MUST NOT exchange the handoff; it shows
 frame-local text that person verification can't complete here, grants nothing,
-and the attempt expires. After a successful exchange it fetches options at once,
-enables its own "Verify with passkey" control only when options are ready, and
-calls `get()` directly from that control's activation with no intervening
-network request. Once the handoff is consumed, any retry needs a new
+and the attempt expires. After a successful exchange it fetches options at once.
+It MUST show its own "Verify with passkey" control, enabled only when options
+are ready, and MUST call `get()` directly from that control's activation with no
+intervening network request. Once the handoff is consumed, any retry needs a new
 transaction.
 
 Browser behavior (delegation, consent prompts, `topOrigin`, local-network
@@ -673,7 +676,7 @@ attestation budget. The page keeps proof inputs in memory only and MUST NOT
 persist them. An expired or cancelled attempt needs a new transaction.
 
 Handoff, completion, and attempt tokens are bearer secrets, not identities. They
-MUST NOT be logged. A stolen token without the required private device context
+MUST NOT be logged or included in analytics. A stolen token without the required private device context
 MUST NOT authorize a ceremony or result retrieval.
 
 ```mermaid
@@ -717,8 +720,8 @@ W = SHA-256("bytebind/v1/person/challenge" || cid || H1 || w)
 
 `cid` is 16 bytes; `H1` and `w` are 32 bytes. The Authority stores `W` and `w`
 and maps them to exactly one `cid`, generation, RP, audience, profile, `Q`,
-device, `N`, `H1`, assurance, RP ID/origin, and deadline; none may change after
-options are issued. `W` is a transcript commitment carried as an ordinary
+device, `N`, `H1`, assurance, RP ID/origin, and deadline. These MUST NOT
+change after options are issued. `W` is a transcript commitment carried as an ordinary
 WebAuthn challenge, not a new signature format, and not an audit mechanism.
 
 Verification MUST follow WebAuthn assertion verification (type, challenge,
@@ -834,8 +837,9 @@ admits a device to enrollment; it doesn't prove whose credentials may change.
   ID MUST NOT suffice, and subjects MUST NOT be merged by name or owner.
 - **Invites:** 32 random bytes stored only as a hash; scoped to one subject and
   purpose (`new_subject` or `add_credential`); valid 15 minutes by default, at
-  most 24 hours; delivered out of band; redacted from logs; consumed only from an
-  enrollment-authorized context, creating one registration attempt. An
+  most 24 hours. Invites MUST be delivered out of band, MUST be redacted from
+  logs, and MUST be consumed only from an enrollment-authorized context, where
+  consumption creates one registration attempt. An
   `add_credential` invite supplements fresh existing-credential verification and
   replaces it only when issued through approved recovery.
 
@@ -890,8 +894,9 @@ A grant's `assurance` object carries `device_attested`, `user_present`, and
 
 Assurance booleans may be released without any person identifier. An RP that
 requires identity MUST be registered for `person_subject` disclosure; otherwise
-creation fails. Omitted permission is never implicit permission, and clients
-can't select disclosure. Global names need a separate explicit permission.
+creation fails. Omitted permission MUST NOT be treated as permission, and
+clients can't select disclosure. Global person identifiers and global names MUST require
+separate explicit operator disclosure permission.
 Person identifiers are pairwise by default:
 
 ```text
@@ -935,7 +940,7 @@ one lease.
 ### 17.2 Expiry is opaque to the client
 
 - The challenge MUST NOT carry an expiry.
-- Session application responses MUST NOT disclose the lease's remaining time.
+- Session application responses MUST NOT disclose the lease's expiry or remaining time.
 - The session cookie SHOULD have no lease-derived `Max-Age` or `Expires`.
 - The client renews every 60 seconds while the page is open. A refused request
   (for example HTTP 401) means access is unavailable. A failed renewal leaves
