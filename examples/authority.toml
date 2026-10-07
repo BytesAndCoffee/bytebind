@@ -8,6 +8,12 @@ attest_window = 30          # seconds from transaction creation to attestation (
 redeem_window = 10          # seconds from attestation to redemption (at most 10)
 max_pending_per_rp = 200
 
+# Separate private listener for passkey registration, management, and step-up.
+[person]
+origin = "https://authority.example-tailnet.ts.net:8444"
+enrollment_tags = ["tag:bytebind-enrollment"]
+self_enrollment = false
+
 # A relying party on the same host: control over the Unix socket, identified by its user ID.
 [[rp]]
 id = "manage-app"
@@ -15,7 +21,9 @@ origin = "https://app.example.com"
 audiences = ["manage"]
 unix_uid = 998
 grant_ttl = 180             # seconds; RP leases never outlast it (at most 300)
-claims = ["device_id"]      # what the RP may learn: device_id and/or tags
+claims = ["device_id", "person_subject"]  # pairwise person identity only when requested
+assurances = ["device", "verification"]
+person_max_age = 300
 authorization = ["manage:read"]
 
 [rp.policy]

@@ -434,6 +434,7 @@ class InProcessControl:
 
     def _post(self, path, body):
         from bytebind.rp import AuthorityError
+
         try:
             return self.control.handle(self.rp, path, json.dumps(body).encode())
         except ControlError as exc:
@@ -735,3 +736,57 @@ def test_concurrent_assertions_cannot_burn_the_winner(world):
     with ThreadPoolExecutor(max_workers=4) as workers:
         assert sum(workers.map(deliver, range(4))) == 1
     assert world[1].record(cid)["status"] == "redeemable"
+
+
+def test_rp_example_registration_and_both_person_profiles(world, tmp_path):
+    from examples.rp_app import create_app
+
+    rp = RelyingParty(
+        InProcessControl(world),
+        origin=APP,
+        audience="manage",
+        database=str(tmp_path / "example.db"),
+        now=world[7],
+    )
+    with TestClient(create_app(rp, person_origin=PERSON), base_url=APP, headers={"Origin": APP}) as app:
+        # Registration links are available without an application lease.
+        page = app.get("/passkeys")
+        assert page.status_code == 200
+        assert f'href="{PERSON}/enroll"' in page.text and f'href="{PERSON}/manage"' in page.text
+        invite, subject = world[3].invite("Example participant")
+        prepared = world[5].post("/enroll/begin", json={"invite": invite}).json()
+        authenticator = Authenticator(world[3].rp_id)
+        assert (
+            world[5]
+            .post(
+                "/enroll/complete",
+                headers={"X-ByteBind-Attempt": prepared["token"]},
+                json={"credential": authenticator.register(prepared["options"]), "name": "Example passkey"},
+            )
+            .status_code
+            == 200
+        )
+        world = (*world[:4], authenticator, *world[5:8], subject)
+        device = app.post("/bytebind/challenge").json()
+        assert app.post("/bytebind/proof", json=prove_rp(world, device)).status_code == 200
+        assert app.get("/status").status_code == 200
+        assert app.get("/verified").status_code == 401
+        challenge = app.post("/bytebind/challenge", json={"target": "/verified"}).json()
+        assert app.post("/bytebind/proof", json=prove_rp(world, challenge, "verification")).status_code == 200
+        verified = app.get("/verified")
+        assert verified.status_code == 200 and "ps_" in verified.text
+        assert 'ByteBind.transaction("/restart-verified"' in verified.text
+        body = b'{"service":"demo"}'
+        challenge = app.post("/restart-verified", content=body, headers={"Content-Type": "application/json"})
+        assert challenge.status_code == 202
+        q = p.request_digest("POST", "/restart-verified", {"content-type": "application/json"}, body)
+        proof = prove_rp(world, challenge.json(), "verification", q=q)
+        done = app.post("/bytebind/proof", json=proof)
+        assert done.status_code == 200 and done.json()["count"] == 1
+        assert done.json()["assurance"]["fresh_for_transaction"] is True
+        assert app.post("/bytebind/proof", json=proof).status_code == 401
+        # The existing headless/device-only operation is still independent.
+        device_challenge = app.post("/restart", content=body, headers={"Content-Type": "application/json"})
+        device_q = p.request_digest("POST", "/restart", {"content-type": "application/json"}, body)
+        done = app.post("/bytebind/proof", json=prove_rp(world, device_challenge.json(), q=device_q))
+        assert done.status_code == 200 and done.json()["count"] == 2

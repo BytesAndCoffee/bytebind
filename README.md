@@ -38,7 +38,8 @@ renewal behavior, and the remaining browser acceptance work.
   [nginx config](examples/demo/nginx.conf), Authority registration instructions,
   and an optional [systemd service](examples/demo/bytebind-demo.service).
 - **[Two-profile example](examples/rp_app.py)** — FastAPI app using the binding for
-  both a session lease and a transaction-bound operation.
+  device-only and person-verified session leases and transaction-bound operations,
+  with Authority passkey registration links.
 - **[Python API client example](examples/client/README.md)** — session and
   transaction calls against the two-profile app.
 
