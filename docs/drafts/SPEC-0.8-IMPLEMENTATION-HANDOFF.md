@@ -68,3 +68,21 @@ are still being changed.
 SPEC.md's implementation-status paragraph changed; its normative requirements
 are unchanged. The current snapshot hash in the review notes was updated for
 that paragraph change.
+
+## Demo follow-up (separate commit)
+
+After the implementation commit, the user requested passkey registration and
+step-up in the demo. The separately committed follow-up adds `/passkeys`, links to the
+private Authority's enrollment/management pages, `/verified` with five-minute
+person verification and pairwise identity, and `/api/person/approve` requiring
+a fresh transaction-bound verified assertion. `BYTEBIND_PERSON_ORIGIN` configures
+only the registration links; step-up uses the authenticated transaction origin.
+
+The demo integration test registers a separately invited subject through the
+private HTTP listener, refuses a device-only lease on the person page, completes
+the session and transaction ceremonies, rejects proof replay and checks subject
+suspension. This exposed an RP error distinction: validation refusal (HTTP 403)
+now requests fresh step-up; transport failure/Authority outage still refuses
+with 503. Review that small `require_person` change with the demo additions.
+The browser iframe is also sized to keep its verification controls visible.
+The full suite passes with 230 tests after these additions.

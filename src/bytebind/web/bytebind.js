@@ -118,6 +118,7 @@ const ByteBind = (() => {
       b64decode(step.handoff,32);b64decode(step.completion,32);
       if(typeof document==="undefined" || globalThis.top!==globalThis.self) throw new CeremonyFailure("step-up",0);
       const frame=document.createElement("iframe");frame.title="ByteBind person verification";
+      frame.style.width="min(100%, 32rem)";frame.style.height="20rem";
       frame.src=url.href+"#"+step.handoff;
       frame.allow=`publickey-credentials-get ${person.origin}; local-network ${person.origin}; local-network-access ${person.origin}`;
       document.body.appendChild(frame);

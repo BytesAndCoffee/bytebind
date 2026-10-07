@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .fastapi import ByteBind
+from .config import exact_https_origin
 from .rp import RelyingParty
 
 STYLE = """
@@ -34,12 +35,15 @@ def page(title: str, body: str) -> HTMLResponse:
                         headers={"X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff"})
 
 
-def create_app(rp: RelyingParty | None = None) -> FastAPI:
+def create_app(rp: RelyingParty | None = None, *, person_origin: str | None = None) -> FastAPI:
     origin = rp.origin if rp else os.getenv("BYTEBIND_ORIGIN", "")
     parsed = urlsplit(origin)
     if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
             or parsed.path or parsed.query or parsed.fragment):
         raise ValueError("Set BYTEBIND_ORIGIN to the public HTTPS origin, e.g. https://demo.example.com (no trailing slash)")
+    person_origin = person_origin if person_origin is not None else os.getenv("BYTEBIND_PERSON_ORIGIN", "")
+    if person_origin and (not exact_https_origin(person_origin) or person_origin == origin):
+        raise ValueError("Set BYTEBIND_PERSON_ORIGIN to the separate Authority person HTTPS origin")
     if rp is None:
         database = Path(os.getenv("BYTEBIND_RP_DB", "bytebind-rp.sqlite3")).expanduser()
         database.parent.mkdir(parents=True, exist_ok=True)
@@ -61,7 +65,59 @@ def create_app(rp: RelyingParty | None = None) -> FastAPI:
                     '<p>Anyone can view this page. The admin page requires an authorized device '
                     'on the private network.</p><div class="panel"><h2>Try it</h2>'
                     '<p>Connect your device to the private network, then open the admin page.</p>'
-                    '<a class="button" href="/admin">Open admin</a></div>')
+                    '<a class="button" href="/admin">Open admin</a></div>'
+                    '<div class="panel"><h2>Device + person</h2>'
+                    '<p>Register an Authority passkey, then try a page and an approval that require person verification.</p>'
+                    '<p><a href="/passkeys">Register or manage passkeys</a></p>'
+                    '<a class="button" href="/verified">Try passkey step-up</a></div>')
+
+    @app.get("/passkeys", response_class=HTMLResponse)
+    def passkeys():
+        if not person_origin:
+            return page("Passkeys", '<h1>Passkey setup</h1><p>The operator needs to configure the '
+                        'Authority person listener and BYTEBIND_PERSON_ORIGIN before registration is available.</p>'
+                        '<a href="/">Back to home</a>')
+        private = html.escape(person_origin, quote=True)
+        return page("Passkeys", '<h1>Your Authority passkey</h1>'
+                    '<p>Ask your operator for a one-use enrollment invite. On a device allowed to enroll, '
+                    'open the Authority registration page, enter the invite, and create your passkey.</p>'
+                    '<p>Your passkey belongs to your person subject, independently of the device’s owner.</p>'
+                    '<div class="panel">'
+                    f'<p><a class="button" href="{private}/enroll" target="_blank" rel="noopener noreferrer">Register passkey</a></p>'
+                    f'<p><a href="{private}/manage" target="_blank" rel="noopener noreferrer">Manage existing passkeys</a></p>'
+                    '</div><p>Registration and management happen on the private Authority. '
+                    'Return here after registration.</p>'
+                    '<p><a class="button" href="/verified">Try passkey step-up</a></p><a href="/">Back to home</a>')
+
+    @app.get("/verified", response_class=HTMLResponse)
+    @bind(require=["tag:admin"], assurance="verification", person_max_age=300, identify=True)
+    async def verified(lease=bind.lease):
+        person = html.escape(lease.claims["person_subject"])
+        return page("Person verified", '<h1>Device + person verified.</h1>'
+                    '<p>Your device has admin access and your passkey verified the person using it.</p>'
+                    f'<div class="panel"><h2>Your identity for this app</h2><pre>{person}</pre>'
+                    '<p>Device renewal preserves this verification’s original age. The Authority validates '
+                    'it again on every visit to this page.</p></div>'
+                    '<div class="panel"><h2>Approve once</h2>'
+                    '<p>This demonstration approval requires a fresh passkey assertion for this exact request.</p>'
+                    '<button id="approve">Approve with passkey</button>'
+                    '<pre id="approval-result" role="status" aria-live="polite">Ready.</pre></div>'
+                    '<p><a href="/passkeys">Passkey registration and management</a></p><a href="/">Back to home</a>'
+                    '<script>document.getElementById("approve").addEventListener("click",async()=>{'
+                    'const button=document.getElementById("approve"),result=document.getElementById("approval-result");'
+                    'button.disabled=true;try{'
+                    'const response=await ByteBind.transaction("/api/person/approve",'
+                    '{method:"POST",body:"{}",contentType:"application/json"},"/bytebind/proof");'
+                    'if(!response.ok)throw new Error("Approval failed. Start a new attempt.");'
+                    'result.textContent=(await response.json()).message;'
+                    '}catch(error){result.textContent="Approval failed. Start a new attempt.";}'
+                    'finally{button.disabled=false;}});</script>')
+
+    @app.post("/api/person/approve")
+    @bind(require=["tag:admin"], grant=bind.TRANSACTION, assurance="verification")
+    async def approve(grant=bind.grant):
+        return {"ok": True, "message": "This request was approved with a fresh verified passkey.",
+                "assurance": grant.assurance}
 
     @app.get("/admin", response_class=HTMLResponse)
     @bind(require=["tag:admin"], grant=bind.LEASE)

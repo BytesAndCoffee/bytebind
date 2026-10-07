@@ -1,7 +1,8 @@
 # ByteBind demo behind nginx
 
-A public welcome page, an admin page requiring `tag:admin`, and a protected
-“Check access” button. The app uses real ByteBind ceremonies and Authority
+A public welcome page, an admin page requiring `tag:admin`, passkey registration
+links, a person-verified page, and a fresh-passkey approval button.
+The app uses real ByteBind ceremonies and Authority
 autodiscovery. It contains no simulated sign-in or privileged system operations.
 
 ## Start the app
@@ -117,6 +118,91 @@ Neither Authority listener goes through the demo's public nginx virtual host.
 See [examples/authority.toml](../authority.toml) and the main README for listener
 commands. Browser public-to-private access may require permission; availability
 varies by browser and is still a live deployment testing item for this project.
+
+## Enable passkey registration and step-up
+
+Install the Authority's optional verifier with `pip install '.[person]'` from
+this checkout. Add a separate person listener to its configuration:
+
+```toml
+[person]
+origin = "https://authority.your-tailnet.ts.net:8444"
+enrollment_tags = ["tag:bytebind-enrollment"]
+self_enrollment = false
+```
+
+In the demo's existing `[[rp]]` entry, replace `claims` and add:
+
+```toml
+claims = ["device_id", "tags", "person_subject"]
+assurances = ["device", "verification"]
+person_max_age = 300
+```
+
+Keep the `tag:admin` device policy. Restart the base and control listeners after
+changing the configuration, then run the separate private listener:
+
+```bash
+bytebind-authority --config authority.toml person --host YOUR_TAILNET_IP --port 8444 --certfile cert.pem --keyfile key.pem
+```
+
+Use a certificate for that Authority hostname. Set the demo's registration-link
+origin to the same value and restart the demo:
+
+```bash
+export BYTEBIND_PERSON_ORIGIN=https://authority.your-tailnet.ts.net:8444
+```
+
+For systemd, uncomment and edit this setting in `/etc/bytebind-demo.env`.
+This setting supplies registration links; step-up's origin comes from the
+authenticated Authority transaction. The public demo does not accept invites
+or register credentials itself.
+
+Add these entries to the same tailnet policy's `tagOwners` and `grants`:
+
+```json
+"tag:bytebind-enrollment": ["autogroup:admin"]
+```
+
+```json
+{"src": ["tag:admin"], "dst": ["tag:bytebind-authority"], "ip": ["tcp:8444"]},
+{"src": ["tag:bytebind-enrollment"], "dst": ["tag:bytebind-authority"], "ip": ["tcp:8444"]}
+```
+
+The enrollment device needs the dedicated `tag:bytebind-enrollment` tag; ordinary
+demo access still needs `tag:admin`. Neither private listener goes through the
+public nginx proxy.
+
+Issue a one-use invite using the Authority's service account:
+
+```bash
+bytebind-authority --config authority.toml invite --name "Demo participant"
+```
+
+Give the invite to the intended person through your trusted channel; it expires
+after 15 minutes. In the demo, open **Register or manage passkeys**, then
+**Register passkey**. This opens the private Authority page. Enter the invite
+and a passkey name, click **Prepare enrollment**, then **Create passkey**.
+Return to the demo and choose **Try passkey step-up**.
+
+`/verified` first completes device attestation, then displays the Authority's
+passkey iframe. Click **Verify with passkey** there. The resulting page shows
+the person's pairwise identifier for this application. Every visit validates
+the association with the Authority; silent device renewal does not extend its
+five-minute person-verification age.
+
+**Approve with passkey** demonstrates `/api/person/approve`, a transaction-bound
+POST. Even immediately after opening `/verified`, it requires another fresh
+passkey assertion bound to that exact request. It returns a demonstration
+confirmation and makes no external change. No failed approval is automatically
+retried.
+
+Registration can happen before the demo has a device lease. Shared devices can
+register different people independently of Tailscale ownership. Credential
+management and adding another passkey require fresh verification at the
+Authority. Recovery remains disabled. See [person setup](../../docs/PERSON-STEP-UP.md)
+for the security boundaries and [the roadmap](../../docs/ROADMAP.md) for real-browser
+private-HTTPS acceptance gates.
 
 ## Optional systemd service
 

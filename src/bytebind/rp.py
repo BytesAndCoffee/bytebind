@@ -325,7 +325,12 @@ class RelyingParty:
         if not lease or not context.get("association") or context.get("person_deadline",0) <= now or now-context.get("person_at",0) > max_age or not _supports_evidence(context.get("person_assurance"),assurance):
             raise CeremonyError("person step-up required")
         client = self.authority.pinned(context["authority"]) if hasattr(self.authority,"pinned") else self.authority
-        result = client._post("/v1/person-validation", {"audience":self.audience,"lease_id":context["lease_id"],"association":context["association"],"device_grant":context["device_grant"]})
+        try:
+            result = client._post("/v1/person-validation", {"audience":self.audience,"lease_id":context["lease_id"],"association":context["association"],"device_grant":context["device_grant"]})
+        except AuthorityError as exc:
+            if exc.status == 403:
+                raise CeremonyError("person association invalid") from None
+            raise
         remaining = result.get("assurance",{}).get("person_expires_in")
         if result.get("active") is not True or not _supports_evidence(result.get("assurance"),assurance) or type(remaining) not in (float,int) or not math.isfinite(remaining) or remaining<=0:
             raise CeremonyError("person association invalid")

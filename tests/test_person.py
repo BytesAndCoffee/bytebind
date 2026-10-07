@@ -433,14 +433,19 @@ class InProcessControl:
         return self.control.redeem(self.rp, {"cid": cid, "R": r, "audience": audience})
 
     def _post(self, path, body):
-        return self.control.handle(self.rp, path, json.dumps(body).encode())
+        from bytebind.rp import AuthorityError
+        try:
+            return self.control.handle(self.rp, path, json.dumps(body).encode())
+        except ControlError as exc:
+            raise AuthorityError(exc.status, exc.code) from None
 
 
-def prove_rp(world, challenge, assurance="device"):
+def prove_rp(world, challenge, assurance="device", *, q=None):
+    profile = "tx" if q is not None else "session"
     cid = p.b64decode(challenge["cid"], 16)
     c = p.b64decode(challenge["C"], 32)
     n = secrets.token_bytes(32)
-    h1 = p.compute_h1("session", c, cid, n)
+    h1 = p.compute_h1(profile, c, cid, n, q)
     response = world[6].post(
         "/attestation", json={"cid": challenge["cid"], "N": p.b64encode(n), "H1": p.b64encode(h1)}
     )
@@ -467,8 +472,8 @@ def prove_rp(world, challenge, assurance="device"):
             },
         )
     assert response.status_code == 200, response.text
-    ip, s = p.open_h2("session", c, cid, n, h1, p.b64decode(response.json()["H2"], 76))
-    return {"cid": challenge["cid"], "R": p.b64encode(p.compute_r("session", s, cid, c, ip))}
+    ip, s = p.open_h2(profile, c, cid, n, h1, p.b64decode(response.json()["H2"], 76))
+    return {"cid": challenge["cid"], "R": p.b64encode(p.compute_r(profile, s, cid, c, ip, q))}
 
 
 def test_device_renewal_preserves_person_without_refreshing_it(world, tmp_path):

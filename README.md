@@ -33,7 +33,8 @@ renewal behavior, and the remaining browser acceptance work.
 ## Examples and demos
 
 - **[bytebind-demo](examples/demo/README.md)** — runnable FastAPI app with a public
-  homepage and an admin page protected by `tag:admin`. Includes an
+  homepage, an admin page protected by `tag:admin`, Authority passkey registration
+  links, a person-verified page, and a fresh-passkey approval. Includes an
   [nginx config](examples/demo/nginx.conf), Authority registration instructions,
   and an optional [systemd service](examples/demo/bytebind-demo.service).
 - **[Two-profile example](examples/rp_app.py)** — FastAPI app using the binding for
