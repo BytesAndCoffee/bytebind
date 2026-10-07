@@ -176,3 +176,218 @@ Still deferred: the Mermaid wire details (person_origin and 202/poll loop),
 sequential challenge reissue after a mis-tapped cancellation, and the shared
 threat-model mappings recorded in the handoff. Sequential reissue is explicitly
 tracked under gate 5, with no assumed user decision.
+
+
+## Round 2: optional Authority-origin iframe (2026-10-06)
+
+The user authorized applying the updated [handoff](HANDOFF.md) in this chat.
+The requirement recorded there is preserved verbatim:
+
+> WebAuthn person attestation is an OPTIONAL STEP-UP phase.
+>
+> The existing ByteBind private-path/device attestation remains the core protocol
+> and MUST complete through the existing browser/RP/Authority flow.
+>
+> The WebAuthn iframe MUST NOT replace, proxy, or perform the base ByteBind
+> attestation.
+>
+> After base attestation succeeds, the Authority MAY require an additional person
+> identity attestation. For browser clients, that step-up MAY be performed in an
+> Authority-origin iframe reachable over the private overlay.
+>
+> The iframe's sole security function is to complete the WebAuthn ceremony with the
+> Authority. It does not deliver the base ByteBind proof and does not communicate
+> identity results to the RP.
+>
+> The Authority correlates the successful WebAuthn assertion with the existing
+> ByteBind transaction and marks the required person-attestation property satisfied.
+>
+> Redemption remains the point at which the RP learns any permitted resulting
+> identity claims.
+
+Applied to sections 5, 6 step 5, 7, 13, and 14:
+
+- Optional iframe person ceremony alongside supported popup mode.
+- Frameable step-up only; enrollment/management reject framing.
+- Authority-origin assertion checks plus transaction-bound crossOrigin/topOrigin.
+- Memory-only bearer attempt session and same-origin CSRF/Origin/Host checks.
+- Iframe activation/delegation, private-network browser gates, and explicit popup fallback.
+- No frame message API, base-attestation relay, H2/proof delivery, or RP identity disclosure.
+- Additional threats and browser/protocol acceptance tests.
+
+Previous spec SHA-256: `29b13a6a913d4e01a5dfaa53e825a35ddc579727f214b670cf00a44913324acc`.
+Resulting round-2 spec SHA-256: `2350d1ecc4d817d39ba289bc28ce6211a2cbbfb186cd15478a62396e9fb50caf`.
+
+This entry supersedes the earlier iframe exclusion and popup-only browser
+assumptions. Sections 8, 11, and 16, including state, renewal, and redemption
+semantics, remain byte-for-byte unchanged. Source drafts, review, handoff,
+SPEC.md, implementation, and tests remain unchanged. The Mermaid wire updates
+remain deferred as previously recorded. Round-1 review closure is historical;
+Claude has not yet cross-verified these round-2 additions.
+
+For Claude's next review, independently check both context modes against the
+updated handoff, transaction origin binding, no-cookie session behavior, iframe
+request restrictions, activation/delegation and fallback. Verify that fallback
+uses an unconsumed handoff or a new transaction, never a consumed token or
+transferred assertion. Real-browser support remains an open acceptance gate.
+
+
+## Review 2 disposition and user-selected session model (2026-10-06)
+
+Reviewed [Claude review 2](SPEC-0.8-CLAUDE-REVIEW-2.md). The user chose:
+
+> device + person verified sessions can silently renew the device lease, person assumes renewed until a new call to a person-attested endpoint is made
+
+The clarification accepted by the user is that retained person association is
+checked on the next person-attested endpoint against validity and route freshness,
+with fresh step-up when needed; silent device renewal never resets person age.
+This supersedes the earlier missing-person-evidence invalidation rule.
+
+| Finding | Decision and application |
+|---|---|
+| V1 | Do not adopt mandatory reuse permission. Preserve person association through device-only renewal; validate current Authority status and device continuity on each person endpoint before execution. Freshness/deadlines remain finite and original authentication time is unchanged |
+| V2 | Adopt pre-handoff frame API/delegation checks and immediately preload options; get() runs directly on activation. Consumed handoff fallback still requires a new transaction |
+| V3 | Adopt reported context mode in options request; immutable mode must match verified assertion fields |
+| V4 | Defer optional per-RP paths; document static allowlist disclosure and retain fixed URL validation |
+| V5 | Require serialized canonical origins and reject noncanonical configuration; implemented 0.7 parser unchanged |
+| V6 | Mark LNA token provisional; browser matrix must verify actual tokens, delegation and topOrigin support |
+
+Before SHA-256: `2350d1ecc4d817d39ba289bc28ce6211a2cbbfb186cd15478a62396e9fb50caf`.
+After SHA-256: `356262685d77e0610ab66c83f735f7cfc7828baf49d9f903ec6be31c71d1d411`.
+
+States and transaction-redemption rules (section 8), and section 16, remain
+byte-for-byte unchanged. Source drafts, review files, handoff, SPEC.md, code,
+and tests remain unchanged. The endpoint status check, server-only association
+handle, and latest device-grant binding require exact schemas at wire freeze;
+this draft defines fail-closed behavior rather than claiming implementation.
+Claude should cross-verify this new model, especially no mandatory reuse, no age
+reset, no stale handler identity, shared-device continuity, revocation/outage,
+and unchanged fresh transaction requirements. Earlier reviews remain historical.
+
+
+## Round 3: iframe-only — Codex cross-review (2026-10-06)
+
+Claude applied this round directly to the spec under the user's instruction.
+The user then authorized Codex to review it and record this ledger entry.
+The decisions quoted in the handoff are:
+
+> no popups. iframe only. unless thats a platform compat issue
+
+> update the spec and handoff
+
+Baseline SHA-256: `356262685d77e0610ab66c83f735f7cfc7828baf49d9f903ec6be31c71d1d411`.
+Reviewed/result SHA-256: `1100138b0c30fa728a8f5326c8cb7a4815f0438a527c3528fdbd20be89a63c00` (matches Claude's handoff).
+Codex made no spec edits during this review.
+
+### Disposition
+
+**Consistent with the iframe-only decision, with one Low wording issue and
+browser acceptance still open.** Missing `topOrigin` is accepted as a deliberate
+compatibility choice under the trusted-browser/Authority assumptions, not proof
+of equivalent signed embedder evidence. The per-RP framing restriction and
+RP-path handoff check are both normative. The present topOrigin mismatch still
+fails; the crossOrigin flag must be true.
+
+- V3's reported-mode mechanism is superseded: only iframe step-up exists.
+- V4's per-RP path deferral is reversed: `/step-up/<rp_id>` and a framing policy
+  listing only that RP's origin are now required. This browser-enforced binding
+  supports the compatibility choice when signed client data lacks topOrigin.
+- No popup, popup-fallback, or selectable top-level step-up mode remains.
+  Top-level enrollment/management remains supported and is not person step-up.
+- Pre-handoff checks, preloaded options, frame-local activation/error UI,
+  no-cookie attempt token, no message API, base-first gate, and redemption-only
+  disclosure remain intact. Unsupported configurations grant nothing.
+- Sections 8 and 16 match committed `938ab37` byte-for-byte. Section 11 matches
+  the prior Codex session-model replacement byte-for-byte. The user's retained
+  person association and endpoint-triggered checks were not disturbed.
+
+### Change trace supplied in the handoff
+
+| Section | Change |
+|---|---|
+| §5 (browser context) | Step-up runs only in an Authority-origin iframe embedded by a top-level application page. Popups and full-page navigation aren't part of the profile. Background renewal must not embed the frame |
+| §5 (framing) | **Per-RP step-up path `/step-up/<rp_id>`**, whose `frame-ancestors` lists exactly that RP's origin. The handoff exchange refuses a handoff from another RP's transaction and burns the expected generation. An unknown `rp_id` gets a generic not-found. This replaces the static all-RP allowlist and its disclosure limitation. **It reverses Codex's V4 deferral:** without `topOrigin` on Safari, browser-enforced per-RP framing is what binds the embedder |
+| §5 (COOP, polling) | COOP applies to the top-level enrollment and management pages. Popup-blocked and `noopener` text removed |
+| §5.1 (renamed "Iframe step-up context") | Per-RP markup, delegating `publickey-credentials-get`, `local-network`, and `local-network-access` (provisional). Top-level embedder required (WebKit single-cross-origin-ancestor rule). Safari gesture and consent noted. On an unavailable API or delegation: no handoff exchange, a frame-local "can't complete person verification" message, no fallback, attempt expires. Preloaded options and `get()` on activation retained. Enrollment stays top-level |
+| §6 | Step 5 embeds `/step-up/<rp_id>`. URL validation requires `/step-up/<one rp_id segment>`. Example URL updated. "popup message" changed to "cross-frame message". Mermaid line now "Application embeds Authority step-up iframe" |
+| §7 | `crossOrigin` MUST be `true`. A present `topOrigin` MUST equal `allowed_origin`. An absent `topOrigin` is accepted, because binding then rests on per-RP framing plus the RP-scoped handoff. `crossOrigin` false/absent or a mismatched `topOrigin` is refused and burns. The reported-mode mechanism (V3) is removed, since only one mode exists |
+| §13 | Rows updated for per-RP framing. New rows: absent `topOrigin`, framed application page, RP enumeration |
+| §14 | Popup tests removed. Added: per-RP framing, handoff refused on the wrong RP path, absent `topOrigin` accepted, `crossOrigin` false refused, `topOrigin` presence per browser, framed-embedder refusal, Safari consent, token names, unsupported-browser message |
+| §15 | Gate 3 rewritten for iframe acceptance. Gate 10 lists popups as deferred scope |
+
+### R3-1 — Low: unknown-path response does not eliminate RP enumeration
+
+Section 5 says a generic not-found response "doesn't reveal which RPs are
+registered". A caller can still distinguish a known RP's step-up page/CSP from
+an unknown path's not-found response, and may enumerate guessable identifiers.
+Per-RP framing removes bulk disclosure of all origins in one header; it does
+not make each RP path secret. The section 13 enumeration row needs the same
+qualification. This does not weaken person authorization or handoff isolation.
+
+Proposed correction for review: "An unknown rp_id returns a generic not-found
+response. Per-RP paths avoid exposing the full origin list in a single response;
+registered RP identifiers and reachable paths are not secret, and guessed paths
+may still be enumerable." No correction was applied or silently reverted.
+
+### Standards and platform evidence checked
+
+- [CSP frame-ancestors](https://www.w3.org/TR/CSP3/#directive-frame-ancestors)
+  checks ancestor origins in enforcing browser policy. Acceptance tests must
+  verify actual enforcing response headers on the delivered document, not a
+  report-only policy, and wrong-RP framing/handoff combinations.
+- [WebAuthn assertion verification](https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion)
+  remains mandatory. The missing-topOrigin choice retains challenge, signature,
+  Authority origin/RP ID, crossOrigin, UP/UV, and stored transaction checks.
+- [WebKit STP 143 release notes](https://webkit.org/blog/12563/release-notes-for-safari-technology-preview-143/)
+  document cross-origin iframe WebAuthn support. This establishes engine work,
+  not a complete production Safari version/overlay compatibility matrix.
+- [WebKit issue 222240](https://bugs.webkit.org/show_bug.cgi?id=222240)
+  records cross-origin support work. Current ancestor, gesture, consent, and
+  platform-specific behavior still need acceptance tests.
+- [Apple-hosted forum report 782988](https://developer.apple.com/forums/thread/782988)
+  reports Safari 18.4 omitting topOrigin, with no replies. It is a developer
+  observation, not an Apple guarantee about current Safari behavior.
+- LNA token/version claims remain provisional. No tailnet/browser runtime test
+  was performed and no universal iframe-only compatibility claim is approved.
+
+Gate 3 remains open. Require positive/negative tests for missing and mismatched
+topOrigin, wrong-RP paths, direct top-level step-up, nested application framing,
+actual CSP enforcement, cookie blocking, permissions and unavailable APIs.
+Wire freeze should constrain encoded/ambiguous RP path segments and compare the
+resolved RP against stored transaction scope. Existing section 5 requires the
+server comparison; client path shape alone is not authorization.
+
+Only this ledger was changed during Codex's review. The spec, handoff, source
+drafts, Claude reviews, implementation, and tests remain unchanged.
+
+
+## Version correction: protocol v1, specification draft 0.8 (2026-10-06)
+
+The user explicitly directed:
+
+> this should all be protocol v1 (spec v0.8). nothing has gone live, this is all in early days
+
+Applied to the canonical spec. This supersedes all earlier v2/coexistence
+decisions in this historical ledger and the preserved source drafts. Protocol
+v1 is still being designed before stable deployment; 0.7 and 0.8 identify spec
+drafts rather than two live protocol versions. No code or baseline/source draft
+was changed, and no support claim is made for the draft-0.7 implementation.
+
+- Keep existing base-only `bytebind/v1/*` transcript labels; new person and
+  pairwise labels also use `bytebind/v1/*`.
+- Use protocol marker 1, existing `/attestation`, and `/attestation/result`;
+  remove the proposed v1/v2 endpoint-routing split.
+- Draft-capability and assurance negotiation remains explicit and fail closed.
+  Protocol number 1 alone never implies person-step-up support.
+- Replace migration/coexistence wording, discovery advertisements, vectors, and
+  diagram labels accordingly. Old clients require schema compatibility testing.
+- Supersede the pre-release application of 0.7 section 30 to this change; retain
+  explicit versioning requirements for incompatible changes after stable release.
+
+Before SHA-256: `1100138b0c30fa728a8f5326c8cb7a4815f0438a527c3528fdbd20be89a63c00`.
+After SHA-256: `a8435ff437a02a6860db2d0868ca79345126ade46552e60e0d712777ff5eef0c`.
+
+Claude should verify that only version/draft compatibility semantics changed:
+iframe-only gating, identity independence, session model, state/expiry rules,
+exact-operation binding, and redemption properties remain. Source drafts and
+previous review entries are provenance, not alternate active v2 specifications.

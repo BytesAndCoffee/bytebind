@@ -2,8 +2,9 @@
 
 **From:** Claude, 2026-10-06
 **For:** Codex, as owner of the canonical combined draft `SPEC-0.8.md`
-**Status:** Round 1 (P1–P16) is applied. Round 2 (the iframe step-up
-requirement) is open; see below.
+**Status:** Rounds 1 and 2 are applied by Codex. Round 3 (iframe-only) was
+applied **by Claude, directly in `SPEC-0.8.md`, at the user's instruction**.
+Codex should review it and add the ledger entry; see "Round 3" at the end.
 
 ## What happened
 
@@ -252,3 +253,85 @@ tailnet.
   to go directly to `main`, with no PR.
 - If a patch doesn't apply cleanly, or seems to conflict with another, don't
   improvise. Write the conflict into the ledger for the user and Claude.
+
+---
+
+## Round 3: iframe only, no popups (applied by Claude)
+
+### User decisions
+
+1. **"no popups. iframe only. unless thats a platform compat issue"**
+2. After the platform check, **"update the spec and handoff"**. That instruction
+   authorized Claude to edit `SPEC-0.8.md` directly for this round, as an
+   exception to the earlier ownership rule.
+
+The user's verified-session model from Codex's "Review 2 disposition" entry is
+untouched. It supersedes Claude's V1 proposal, and Claude didn't revisit it.
+
+### Platform check: iframe-only works
+
+Checked 2026-10-06, primary sources where they exist.
+
+- **Cross-origin iframe `get()` is supported in all three engines.**
+  - Chrome/Edge 84+ and Firefox 118+ (web.dev).
+  - Safari 15.5+: the WebKit STP 143 release notes say "Enabled using WebAuthn
+    within cross-origin iframe elements"; WebKit bug 222240 is RESOLVED FIXED.
+- **Safari conditions (WebKit bug 222240).**
+  - Requires `allow="publickey-credentials-get"`.
+  - Allows **only one cross-origin ancestor**.
+  - Requires a user gesture and shows a consent prompt.
+- **Safari reportedly omits `topOrigin`** in `clientDataJSON`. The only
+  Apple-hosted evidence is Apple Developer Forums thread 782988 (May 2025),
+  which has no Apple reply. No Apple release note or document mentions
+  `topOrigin`. A secondary source (Corbado) says it's still omitted as of May
+  2026. **This was the compatibility issue:** under the round-2 text, every
+  Safari iframe assertion failed closed.
+- **Registration (`create()`) can't run in a cross-origin frame on Safari.**
+  That doesn't matter here, because enrollment is a top-level page the user
+  visits directly.
+- **Chrome LNA permission names (secondary sources).**
+  - `local-network-access` in Chrome 142–144.
+  - `local-network` (plus `loopback-network`) in Chrome 145+ and Firefox 153+.
+
+### What changed in SPEC-0.8.md
+
+Base hash `356262685d77e0610ab66c83f735f7cfc7828baf49d9f903ec6be31c71d1d411`
+(Codex's review-2 disposition) → result
+`1100138b0c30fa728a8f5326c8cb7a4815f0438a527c3528fdbd20be89a63c00`.
+
+| Section | Change |
+|---|---|
+| §5 (browser context) | Step-up runs only in an Authority-origin iframe embedded by a top-level application page. Popups and full-page navigation aren't part of the profile. Background renewal must not embed the frame |
+| §5 (framing) | **Per-RP step-up path `/step-up/<rp_id>`**, whose `frame-ancestors` lists exactly that RP's origin. The handoff exchange refuses a handoff from another RP's transaction and burns the expected generation. An unknown `rp_id` gets a generic not-found. This replaces the static all-RP allowlist and its disclosure limitation. **It reverses Codex's V4 deferral:** without `topOrigin` on Safari, browser-enforced per-RP framing is what binds the embedder |
+| §5 (COOP, polling) | COOP applies to the top-level enrollment and management pages. Popup-blocked and `noopener` text removed |
+| §5.1 (renamed "Iframe step-up context") | Per-RP markup, delegating `publickey-credentials-get`, `local-network`, and `local-network-access` (provisional). Top-level embedder required (WebKit single-cross-origin-ancestor rule). Safari gesture and consent noted. On an unavailable API or delegation: no handoff exchange, a frame-local "can't complete person verification" message, no fallback, attempt expires. Preloaded options and `get()` on activation retained. Enrollment stays top-level |
+| §6 | Step 5 embeds `/step-up/<rp_id>`. URL validation requires `/step-up/<one rp_id segment>`. Example URL updated. "popup message" changed to "cross-frame message". Mermaid line now "Application embeds Authority step-up iframe" |
+| §7 | `crossOrigin` MUST be `true`. A present `topOrigin` MUST equal `allowed_origin`. An absent `topOrigin` is accepted, because binding then rests on per-RP framing plus the RP-scoped handoff. `crossOrigin` false/absent or a mismatched `topOrigin` is refused and burns. The reported-mode mechanism (V3) is removed, since only one mode exists |
+| §13 | Rows updated for per-RP framing. New rows: absent `topOrigin`, framed application page, RP enumeration |
+| §14 | Popup tests removed. Added: per-RP framing, handoff refused on the wrong RP path, absent `topOrigin` accepted, `crossOrigin` false refused, `topOrigin` presence per browser, framed-embedder refusal, Safari consent, token names, unsupported-browser message |
+| §15 | Gate 3 rewritten for iframe acceptance. Gate 10 lists popups as deferred scope |
+
+The following are unchanged; Claude checked §8 and §16 by hash against `938ab37`:
+
+- §8 (states and deadlines) and §16 (hardening): byte-identical.
+- The session model (§11) and the user's "Review 2 disposition".
+
+### Codex's task (round 3)
+
+1. Review Claude's round-3 edits against the user's decisions and the platform
+   facts above. Check especially:
+   - that accepting an absent `topOrigin` is safe **only** with per-RP
+     `frame-ancestors` and the RP-path handoff check, and that both are
+     normative;
+   - that no popup or mode text remains;
+   - that §11 and the session-model text weren't disturbed.
+2. Add a ledger entry to `SPEC-0.8-CROSS-VERIFY.md` with:
+   - the user's two quoted decisions;
+   - the base and result hashes above;
+   - V3 superseded (one mode);
+   - V4 reversed (per-RP paths now required) and why;
+   - this table.
+3. If you disagree with any change, record it in the ledger for the user. Don't
+   silently revert it.
+
+Claude did not edit `SPEC-0.8-CROSS-VERIFY.md` this round.
