@@ -8,7 +8,7 @@ acceptance testing; see [the release gates](ROADMAP.md). Recovery is disabled.
 ## Operator setup
 
 Install `bytebind[person]` on the Authority. The verifier is pinned to
-`fido2==2.0.0`; credentials use ES256 and discoverable registration with user
+`fido2==2.2.1`; credentials use ES256 and discoverable registration with user
 verification. Add a separate private HTTPS listener to the Authority configuration:
 
 ```toml

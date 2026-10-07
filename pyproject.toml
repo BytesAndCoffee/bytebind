@@ -17,11 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-person = ["fido2==2.0.0"]
+person = ["fido2==2.2.1"]
 client = ["httpx>=0.28"]
 requests = ["requests>=2.32"]
 flask = ["flask>=3"]
-dev = ["flask>=3", "httpx>=0.28", "requests>=2.32", "pytest>=8", "fido2==2.0.0"]
+dev = ["flask>=3", "httpx>=0.28", "requests>=2.32", "pytest>=8", "fido2==2.2.1"]
 
 [project.scripts]
 bytebind-authority = "bytebind.authority:main"
