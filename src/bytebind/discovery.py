@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import re
+import os
+import threading
+import time
 from pathlib import Path
 
 from .rp import AuthorityClient
@@ -68,6 +71,15 @@ def discover_authority(directory: Directory, *, audience: str,
         if not isinstance(values, list) or not all(isinstance(v, dict) for v in values):
             raise DiscoveryError("malformed Authority capability")
         for value in values:
+            protocols = value.get("protocols")
+            if protocols is not None:
+                if not isinstance(protocols,list) or not protocols or any(type(v) is not int for v in protocols):
+                    raise DiscoveryError("malformed Authority protocols")
+                if 1 not in protocols:
+                    continue
+            assurances = value.get("assurances")
+            if assurances is not None and (not isinstance(assurances,list) or not assurances or any(not isinstance(v,str) or v not in {"device","presence","verification"} for v in assurances)):
+                raise DiscoveryError("malformed Authority assurances")
             audiences = value.get("audiences")
             if audiences is not None:
                 if not isinstance(audiences, list) or not all(isinstance(a, str) and a for a in audiences):
@@ -85,7 +97,7 @@ def discover_authority(directory: Directory, *, audience: str,
 
 
 class DiscoveringAuthorityClient:
-    """Resolve on each control request, so policy changes are not cached indefinitely.
+    """Discover at transaction creation and pin that Authority through redemption.
 
     Explicit endpoints bypass this class. A local Unix listener takes precedence
     when its socket exists. No retry/failover can accidentally replay a redemption.
@@ -99,15 +111,34 @@ class DiscoveringAuthorityClient:
                  port: int = 9443):
         self.directory = directory or LocalAPI(socket_path)
         self.local_socket, self.tag, self.capability, self.port = local_socket, tag, capability, port
+        self._pins = {}
+        self._lock = threading.Lock()
 
     def _client(self, audience: str) -> AuthorityClient:
         endpoint = (f"unix:{self.local_socket}" if Path(self.local_socket).is_socket() else
                     discover_authority(self.directory, audience=audience, tag=self.tag,
                                        capability=self.capability, port=self.port))
+        return self.pinned(endpoint)
+
+    def pinned(self, endpoint):
+        if endpoint.startswith("unix:") and "BYTEBIND_AUTHORITY_UID" in os.environ:
+            return AuthorityClient(endpoint, authority_uid=int(os.environ["BYTEBIND_AUTHORITY_UID"]))
         return AuthorityClient(endpoint)
 
-    def begin(self, audience, profile="session", q=None):
-        return self._client(audience).begin(audience, profile, q)
+    def begin(self, audience, profile="session", q=None, **kwargs):
+        with self._lock:
+            now=time.monotonic()
+            self._pins={cid:value for cid,value in self._pins.items() if value[1]>now}
+            if len(self._pins)>=4096:
+                raise DiscoveryError("too many pending Authority pins")
+            client=self._client(audience)
+            result=client.begin(audience,profile,q,**kwargs)
+            self._pins[result["cid"]]=(client.endpoint,now+210)
+            return result | {"control_authority":client.endpoint}
 
     def redeem(self, cid, r, audience):
-        return self._client(audience).redeem(cid, r, audience)
+        with self._lock:
+            pin=self._pins.pop(cid,None)
+        if pin is None or pin[1] < time.monotonic():
+            raise DiscoveryError("transaction has no live creating Authority pin")
+        return self.pinned(pin[0]).redeem(cid,r,audience)

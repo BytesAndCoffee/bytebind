@@ -44,13 +44,13 @@ def test_session_profile_lease_renewal_and_logout(world, clock):
     response = app.post("/bytebind/proof", json=browser_proof(authority, challenge))  # attestation, proof -> redemption -> grant -> response
     assert response.status_code == 200 and response.json()["device_id"] == "nLaptop1CNTRL"
     cookie = response.headers["set-cookie"]
-    assert "bytebind_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie and "SameSite=strict" in cookie
+    assert "__Host-bytebind_session=" in cookie and "HttpOnly" in cookie and "Secure" in cookie and "SameSite=strict" in cookie
     assert app.get("/status").json()["authorization"] == ["manage:read"]
     page = app.get("/", headers={"Accept": "text/html"})
     assert "nLaptop1CNTRL" in page.text and "/bytebind/client.js" in page.text, "protected HTML renews its lease"
-    first = app.cookies.get("bytebind_session")
+    first = app.cookies.get("__Host-bytebind_session")
     renewed = app.post("/bytebind/proof", json=browser_proof(authority, app.post("/bytebind/challenge").json(), n=b"\x0d" * 32))
-    assert renewed.status_code == 200 and app.cookies.get("bytebind_session") != first
+    assert renewed.status_code == 200 and app.cookies.get("__Host-bytebind_session") != first
     assert rp.session(first) is None, "renewal rotates the session token"
     assert app.post("/bytebind/logout").status_code == 204
     assert app.get("/status").status_code == 401
@@ -82,7 +82,7 @@ def test_proof_needs_the_browser_bound_state_cookie(world, config, tmp_path):
     app, authority, rp = world
     challenge = app.post("/bytebind/challenge").json()
     proof = browser_proof(authority, challenge)
-    app.cookies.delete("bytebind_state", path="/bytebind/")
+    app.cookies.delete("__Host-bytebind_state", path="/")
     app.cookies.clear()
     assert app.post("/bytebind/proof", json=proof).status_code == 401
 
@@ -91,10 +91,10 @@ def test_proof_without_the_state_cookie_does_not_cancel_the_ceremony(world):
     app, authority, _ = world
     challenge = app.post("/bytebind/challenge").json()
     proof = browser_proof(authority, challenge)
-    state = app.cookies.get("bytebind_state")
+    state = app.cookies.get("__Host-bytebind_state")
     app.cookies.clear()
     assert app.post("/bytebind/proof", json=proof).status_code == 401
-    app.cookies.set("bytebind_state", state, path="/bytebind/")
+    app.cookies.set("__Host-bytebind_state", state, path="/")
     assert app.post("/bytebind/proof", json=proof).status_code == 200
 
 
@@ -141,10 +141,10 @@ def test_expiry_is_opaque_to_the_client(world):
     app, authority, _ = world
     challenged = app.post("/bytebind/challenge")
     challenge = challenged.json()
-    assert set(challenge) == {"cid", "C", "authority"}
+    assert set(challenge) == {"protocol", "draft", "cid", "C", "authority"}
     response = app.post("/bytebind/proof", json=browser_proof(authority, challenge))
     assert set(response.json()) == {"device_id"}
-    session_cookie = next(c for c in response.headers.get_list("set-cookie") if c.startswith("bytebind_session="))
+    session_cookie = next(c for c in response.headers.get_list("set-cookie") if c.startswith("__Host-bytebind_session="))
     assert "max-age" not in session_cookie.lower() and "expires" not in session_cookie.lower()
     assert "expires" not in json.dumps(app.get("/status").json())
 
@@ -157,7 +157,7 @@ def test_authority_clock_skew_cannot_stretch_or_break_leases(config, short_dir, 
     from conftest import Clock
 
     skewed = open_store(config, now=Clock(1_800_000_000.0 + 86_400))
-    server = unix_control_server(config, skewed, str(short_dir / "s.sock"))
+    server = unix_control_server(config, skewed, str(short_dir / "s.sock"), directory=FakeTailnet())
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         rp = RelyingParty(AuthorityClient(f"unix:{short_dir / 's.sock'}"), origin=APP, audience="manage", database=str(tmp_path / "rp.sqlite3"))

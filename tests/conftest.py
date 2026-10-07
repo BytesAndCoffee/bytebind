@@ -85,7 +85,8 @@ def unix_control(config, short_dir):
 
     store = open_store(config)
     path = str(short_dir / "control.sock")
-    server = unix_control_server(config, store, path)
+    tags = sorted({tag for rp in config.rps.values() for tag in rp.policy.tags})
+    server = unix_control_server(config, store, path, directory=FakeTailnet({PEER: (NODE, tags, False, 0)}))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield path, store

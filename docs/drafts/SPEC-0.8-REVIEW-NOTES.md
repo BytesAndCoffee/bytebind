@@ -1,12 +1,12 @@
 # ByteBind 0.8: review notes
 
-**Status:** Final review complete; user decisions applied 2026-10-06. Not implemented.
+**Status:** Final review complete; user decisions applied 2026-10-06. Experimental implementation added after the final spec review.
 **Protocol:** v1. **Specification:** 0.8-draft.
 **Specification:** [SPEC.md](../../SPEC.md). Draft 0.7 (implemented) is in git
 history at commit `3072234`; the pre-consolidation drafts are in commit `21c290d`.
 **Final review:** [SPEC-0.8-CLAUDE-FINAL-REVIEW.md](SPEC-0.8-CLAUDE-FINAL-REVIEW.md).
 
-Current spec SHA-256: `f3047f06301b47e0b36fb10d5d81b038ea42f998f904f7a14a600ba803d38d2f`.
+Current spec SHA-256: `eb7e002dc8903985f00118d6c55e81be37183f871dfc9f3f53a60ccd4a0c929a`.
 This is a snapshot identifier; if the spec changes, review the delta and update
 this value. Nothing in these notes establishes runtime or browser support.
 
@@ -199,3 +199,11 @@ Provenance gap: Codex's 2,140-line standalone draft (`9e98dccb…`), which the
 consolidation trimmed, was never committed or archived. Claude removed it without
 snapshotting it. Its inputs are in git (`21c290d`, `3072234`), the trim is
 traced against them, and its content is reflected in the final review.
+
+## Implementation follow-up
+
+The implementation work updates only the specification status paragraph; the
+reviewed normative protocol text is unchanged. The historical review confirms
+the design, not the new code. Signed synthetic-authenticator and adapter tests
+exercise the experimental implementation; real-browser acceptance, independent
+implementation review and recovery approval remain open in ROADMAP.md.

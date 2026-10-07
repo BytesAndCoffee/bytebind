@@ -34,7 +34,7 @@ from . import binding as b
 from .limits import declared_fits
 from .binding import GRANT_KEY, SESSION_COOKIE, STATE_COOKIE, Grant
 from .discovery import AUTHORITY_CAPABILITY, AUTHORITY_TAG
-from .rp import AuthorityError, CeremonyError, RelyingParty
+from .rp import AuthorityError, CeremonyError, RelyingParty, _supports_evidence
 from .tailscale import Directory
 
 PROTECTED_KEY = "bytebind.protected"  # per-request; Flask's g is shared with a replayed request
@@ -115,13 +115,31 @@ class ByteBind:
         if not self.core.allow_challenge(request.remote_addr or ""):
             return self._rate_limited()
         try:
-            issued, state = self._rp().challenge(request.headers.get("Origin"))
-        except CeremonyError:
+            from . import protocol as p
+            if not declared_fits(request.headers.get("Content-Length"),1024):
+                return self._failed(413)
+            raw=request.stream.read(1025)
+            if len(raw)>1024:
+                return self._failed(413)
+            body=p.json_body(raw or b"{}")
+            if set(body) not in (set(),{"target"}) or (body and (not isinstance(body["target"],str) or not body["target"].startswith("/") or body["target"].startswith("//"))):
+                raise CeremonyError("invalid challenge target")
+            options={}
+            if body:
+                try:
+                    endpoint,_=current_app.url_map.bind_to_environ(request.environ).match(body["target"].split("?")[0],method="GET")
+                    options=getattr(current_app.view_functions[endpoint],"__bytebind_person__",{})
+                except Exception:
+                    raise CeremonyError("target unavailable") from None
+                if not options:
+                    raise CeremonyError("target has no person session policy")
+            issued, state = self._rp().challenge(request.headers.get("Origin"),previous_session=request.cookies.get(SESSION_COOKIE),**options)
+        except (CeremonyError,ValueError,p.ProtocolError):
             return self._failed(403)
         except (AuthorityError, OSError):
             return self._failed(503)
         response = self._json(issued)
-        self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 60)
+        self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 210)
         return response
 
     def _proof(self) -> Response:
@@ -162,7 +180,7 @@ class ByteBind:
         if protected or required:
             response.headers["Cache-Control"] = "no-store"
         if required and "text/html" in request.headers.get("Accept", "") and request.method == "GET":
-            return Response(b.sign_in_page(), status=401, mimetype="text/html", headers={"Cache-Control": "no-store"})
+            return Response(b.sign_in_page(request_target(request.environ) if response.headers.get("X-ByteBind-Person") else None), status=401, mimetype="text/html", headers={"Cache-Control": "no-store"})
         # Renewal runs only on protected pages: public pages must not start ceremonies
         # or make visitors' browsers contact the private Authority.
         if (protected and response.mimetype == "text/html" and not response.is_streamed
@@ -172,10 +190,11 @@ class ByteBind:
 
     # --- protection ---------------------------------------------------------------------
 
-    def __call__(self, *, require=(), grant=LEASE):
+    def __call__(self, *, require=(), grant=LEASE, assurance="device", person_max_age=None, identify=False):
         if grant not in (self.LEASE, self.TRANSACTION):
             raise ValueError("grant must be bind.LEASE or bind.TRANSACTION")
         required = b.check_requirements(require)
+        person_max_age=b.check_assurance(assurance,person_max_age,identify,grant)
 
         def decorate(view):
             operation = f"{view.__module__}.{view.__qualname__}"
@@ -188,33 +207,43 @@ class ByteBind:
                 if grant == self.LEASE:
                     lease = self._rp().session(request.cookies.get(SESSION_COOKIE))
                     if lease is None:
-                        return self._error(401, "lease_required", {"X-ByteBind-Required": "1"})
+                        return self._error(401, "lease_required", {"X-ByteBind-Required": "1",**({"X-ByteBind-Person":"1"} if assurance != "device" else {})})
                     if request.method not in {"GET", "HEAD", "OPTIONS"}:
                         try:
                             self._rp().check_origin(request.headers.get("Origin"))
                         except CeremonyError:
                             return self._error(403, "origin_refused")
-                    claims, values = lease.claims, {"lease": lease, "grant": None}
+                    if assurance != "device":
+                        try:
+                            lease=self._rp().require_person(request.cookies.get(SESSION_COOKIE),assurance,person_max_age,identify)
+                        except CeremonyError:
+                            return self._error(401,"step_up_required",{"X-ByteBind-Required":"1","X-ByteBind-Person":"1"})
+                        except (AuthorityError,OSError):
+                            return self._failed(503)
+                    claims, values = lease.claims, {"lease": b.lease_view(lease), "grant": None}
                 else:
                     granted = request.environ.get(GRANT_KEY)
                     if granted is None:
-                        return self._challenge_transaction(operation)
+                        return self._challenge_transaction(operation,assurance,identify)
                     if granted["operation"] != operation:
                         return self._error(403, "grant_for_another_operation")
+                    if not _supports_evidence(granted.get("assurance"),assurance,transaction=True):
+                        return self._error(403,"missing_assurance")
                     claims = granted["claims"]
-                    values = {"lease": None, "grant": Grant(claims.get("device_id"), claims)}
+                    values = {"lease": None, "grant": Grant(claims.get("device_id"), claims,granted.get("assurance"))}
                 if not b.meets(claims, required):
                     return self._error(403, "requirements_not_met")
                 for name, default in fills.items():
                     kwargs[name] = values[default.name]
                 return current_app.ensure_sync(view)(*args, **kwargs)
 
+            protected.__bytebind_person__={"assurance":assurance,"person_max_age":person_max_age,"identify":identify} if assurance != "device" and grant == self.LEASE else {}
             return protected
         return decorate
 
     # --- transaction-bound requests ----------------------------------------------------------
 
-    def _challenge_transaction(self, operation: str) -> Response:
+    def _challenge_transaction(self, operation: str, assurance="device", identify=False) -> Response:
         """The access request of a transaction-bound operation: store it, bind it by Q, run nothing."""
         if not self.core.allow_challenge(request.remote_addr or ""):
             return self._rate_limited()
@@ -226,13 +255,13 @@ class ByteBind:
         try:
             issued, state = self.core.challenge_transaction(
                 self._rp(), request.headers.get("Origin"), operation, request.method,
-                request_target(request.environ), request.headers, body)
+                request_target(request.environ), request.headers, body,assurance,identify)
         except CeremonyError:
             return self._failed(403)
         except (AuthorityError, OSError):
             return self._failed(503)
         response = self._json(issued, 202)
-        self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 60)
+        self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 210)
         return response
 
     def _replay(self, stored: dict, grant: dict) -> Response:
@@ -246,7 +275,7 @@ class ByteBind:
         target = stored["target"]
         path, _, query = target.partition("?")
         environ = {key: value for key, value in request.environ.items()
-                   if key.startswith("wsgi.") or (key.isupper() and key not in ("CONTENT_TYPE", "CONTENT_LENGTH"))}
+                   if key.startswith("wsgi.") or key in {"SERVER_NAME","SERVER_PORT","SERVER_PROTOCOL","REMOTE_ADDR","SCRIPT_NAME","HTTPS"}}
         script = environ.get("SCRIPT_NAME", "")
         path_info = unquote_to_bytes(path).decode("latin-1")
         if script and path_info.startswith(script):
@@ -254,7 +283,7 @@ class ByteBind:
         environ.update({"REQUEST_METHOD": stored["method"], "PATH_INFO": path_info, "QUERY_STRING": query,
                         "REQUEST_URI": target, "RAW_URI": target, "CONTENT_LENGTH": str(len(body)),
                         "wsgi.input": BytesIO(body),
-                        GRANT_KEY: {"operation": stored["operation"], "claims": grant.get("claims", {})}})
+                        GRANT_KEY: {"operation": stored["operation"], "claims": grant.get("claims", {}),"assurance":grant.get("assurance",{})}})
         if stored["headers"].get("content-type"):
             environ["CONTENT_TYPE"] = stored["headers"]["content-type"]
         app_iter, status, headers = run_wsgi_app(current_app.wsgi_app, environ, buffered=True)

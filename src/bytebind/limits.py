@@ -12,8 +12,9 @@ from starlette.requests import Request
 class PeerLimiter:
     """A sliding one-minute window per key."""
 
-    def __init__(self, per_minute: int = 30, now: Callable[[], float] = time.monotonic):
+    def __init__(self, per_minute: int = 30, now: Callable[[], float] = time.monotonic, *, minimum_interval: float = 0):
         self.per_minute, self.now = per_minute, now
+        self.minimum_interval = minimum_interval
         self.hits: dict[str, list[float]] = {}
         self.lock = threading.Lock()
 
@@ -23,7 +24,7 @@ class PeerLimiter:
             if len(self.hits) > 10_000:
                 self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < 60}
             hits = [hit for hit in self.hits.get(key, ()) if now - hit < 60]
-            allowed = len(hits) < self.per_minute
+            allowed = len(hits) < self.per_minute and (not hits or now - hits[-1] >= self.minimum_interval)
             if allowed:
                 hits.append(now)
             self.hits[key] = hits

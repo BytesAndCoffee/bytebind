@@ -38,7 +38,7 @@ def test_session_ceremony_over_the_unix_socket(config, unix_control):
     path, store = unix_control
     authority = AuthorityClient(f"unix:{path}")
     challenge = authority.begin("manage")
-    assert set(challenge) == {"cid", "C", "authority", "expires_in"} and challenge["authority"] == config.attest_url
+    assert set(challenge) == {"protocol", "draft", "rp_id", "cid", "C", "authority", "expires_in"} and challenge["authority"] == config.attest_url
     assert challenge["expires_in"] == 30, "relative durations only on the control channel"
     grant = authority.redeem(challenge["cid"], complete_attest(config, store, challenge), "manage")
     assert grant["active"] is True and grant["rp_id"] == "app" and grant["audience"] == "manage"
@@ -143,11 +143,11 @@ def test_https_control_identifies_rps_by_tailnet_node(config, clock):
     tailnet = FakeTailnet({"100.88.0.2": (OTHER_RP_NODE, [], False, 0), "100.88.0.3": ("nStranger", [], False, 0)})
     app = create_control_app(config, tailnet, store)
     with TestClient(app, base_url="https://a.ts.net", client=("100.88.0.2", 1)) as known:
-        response = known.post("/v1/transaction", content=json.dumps({"audience": "ops", "profile": "session"}))
+        response = known.post("/v1/transaction", content=json.dumps({"protocol":1,"draft":"0.8","assurance":"device","lease_id":p.b64encode(bytes(32)),"audience": "ops", "profile": "session"}))
         assert response.status_code == 200
     for peer in ("100.88.0.3", "127.0.0.1", "203.0.113.5"):
         with TestClient(app, base_url="https://a.ts.net", client=(peer, 1)) as stranger:
-            assert stranger.post("/v1/transaction", content=json.dumps({"audience": "ops", "profile": "session"})).status_code == 403
+            assert stranger.post("/v1/transaction", content=json.dumps({"protocol":1,"draft":"0.8","assurance":"device","lease_id":p.b64encode(bytes(32)),"audience": "ops", "profile": "session"})).status_code == 403
 
 
 def test_pending_cap_per_rp(tmp_path, clock):
@@ -169,7 +169,7 @@ def test_redeem_window(config, clock):
 
     store = open_store(config, now=clock)
     control = Control(config, store)
-    challenge = control.begin(config.rps["app"], {"audience": "manage", "profile": "session"})
+    challenge = control.begin(config.rps["app"], {"protocol":1,"draft":"0.8","assurance":"device","lease_id":p.b64encode(bytes(32)),"audience": "manage", "profile": "session"})
     r = complete_attest(config, store, challenge)
     clock.now += 11
     with pytest.raises(ControlError):

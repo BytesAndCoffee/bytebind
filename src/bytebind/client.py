@@ -8,7 +8,7 @@ from typing import Callable
 import httpx
 
 from . import protocol as p
-from ._client import Ceremony, ClientError, response_json
+from ._client import Ceremony, ClientError, StepUpRequired, response_json
 
 
 def _origin(value: str) -> httpx.URL:
@@ -61,7 +61,10 @@ class Client:
 
     def _send(self, request: httpx.Request, step: str) -> httpx.Response:
         try:
-            return self._public.send(request, follow_redirects=False)
+            response = self._public.send(request, follow_redirects=False)
+            if response.headers.get("X-ByteBind-Person") == "1":
+                raise StepUpRequired()
+            return response
         except httpx.HTTPError as exc:
             raise ClientError(step) from exc
 

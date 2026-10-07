@@ -1,6 +1,6 @@
 {
   "protocol": "ByteBind",
-  "version": "draft 0.7",
+  "version": "draft 0.8",
   "encoding": "byte values are unpadded base64url",
   "labels": {
     "session": {

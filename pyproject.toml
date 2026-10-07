@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bytebind"
-version = "0.7.0"
+version = "0.8.0.dev0"
 description = "Reference implementation of ByteBind: binding public web sessions to live presence on a private overlay network"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,10 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+person = ["fido2==2.0.0"]
 client = ["httpx>=0.28"]
 requests = ["requests>=2.32"]
 flask = ["flask>=3"]
-dev = ["flask>=3", "httpx>=0.28", "requests>=2.32", "pytest>=8"]
+dev = ["flask>=3", "httpx>=0.28", "requests>=2.32", "pytest>=8", "fido2==2.0.0"]
 
 [project.scripts]
 bytebind-authority = "bytebind.authority:main"

@@ -1,12 +1,13 @@
 # ByteBind Protocol
 
-**Protocol v1 · Specification 0.8-draft · Not implemented**
+**Protocol v1 · Specification 0.8-draft · Experimental implementation**
 **Date:** 2026-10-06
 **Copyright:** © 2026 Bytes & Coffee Digital Studio
 
-The reference implementation in this repository implements draft 0.7, which is
-in git history at commit `3072234`. Code comments that cite section numbers
-refer to that draft. Review records for this draft are in
+The reference implementation in this repository targets this draft. Real-browser
+acceptance and independent security review remain release gates. Draft 0.7 is
+in git history at commit `3072234`; older code section citations refer to that draft.
+Review records for this draft are in
 [docs/drafts/SPEC-0.8-REVIEW-NOTES.md](docs/drafts/SPEC-0.8-REVIEW-NOTES.md).
 Open verification work and release gates are in
 [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -159,3 +159,34 @@ def compute_r(profile: Profile, s: bytes, cid: bytes, c: bytes, ip: bytes, q: by
 
 def equal(a: bytes, b: bytes) -> bool:
     return hmac.compare_digest(a, b)
+
+
+ASSURANCES = ("device", "presence", "verification")
+DRAFT = "0.8"
+
+def person_challenge(cid: bytes, h1: bytes, w: bytes) -> bytes:
+    if len(cid) != CID_BYTES or len(h1) != SECRET_BYTES or len(w) != SECRET_BYTES:
+        raise ValueError("bad person challenge input length")
+    return hashlib.sha256(b"bytebind/v1/person/challenge" + cid + h1 + w).digest()
+
+def pairwise_subject(key: bytes, rp_id: str, subject_id: bytes) -> str:
+    if len(key) != SECRET_BYTES:
+        raise ValueError("pairwise key must be 32 bytes")
+    return "ps_" + b64encode(_hmac(key, b"bytebind/v1/pairwise" + _prefixed(rp_id.encode("utf-8")) + _prefixed(subject_id)))
+
+def json_body(raw: bytes) -> dict:
+    """Closed schemas must not accept duplicate JSON members or nonfinite values."""
+    import json
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ProtocolError("duplicate member")
+            result[key] = value
+        return result
+    def invalid(value):
+        raise ProtocolError("nonfinite JSON value")
+    body = json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid)
+    if not isinstance(body, dict):
+        raise ProtocolError("expected object")
+    return body

@@ -146,7 +146,7 @@ def test_attest_is_single_use_and_a_race_loser_does_not_burn_the_winner(config, 
     with pytest.raises(TransactionError):
         attest(config, store, FakeTailnet(), PEER, APP, body)
     row = store._read("SELECT status FROM transactions WHERE cid = ?", (begun.cid,))
-    assert row == ("attested",)
+    assert row == ("redeemable",)
 
 
 def test_attest_window(config, store, clock):
@@ -177,7 +177,7 @@ def test_preflight(config, store):
 
 
 def test_attest_service_exposes_only_attest(config, store):
-    assert {route.path for route in create_attest_app(config, FakeTailnet(), store).routes} == {"/attestation"}
+    assert {route.path for route in create_attest_app(config, FakeTailnet(), store).routes} == {"/attestation", "/attestation/result"}
 
 
 def test_oversized_bodies_are_refused_before_being_read(config, store):

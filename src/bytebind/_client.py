@@ -7,6 +7,12 @@ from dataclasses import dataclass
 from . import protocol as p
 
 
+class StepUpRequired(Exception):
+    """An API call requires a human ceremony. No tokens, URL, or response body."""
+    def __init__(self):
+        super().__init__("This endpoint requires person attestation")
+
+
 class ClientError(Exception):
     """A ceremony failed, without including proof material or response bodies."""
 
@@ -16,6 +22,8 @@ class ClientError(Exception):
 
 
 def response_json(response, step: str, status: int = 200) -> dict:
+    if response.status_code == 202 and step == "attestation":
+        raise StepUpRequired()
     if response.status_code != status:
         raise ClientError(step, response.status_code)
     try:
@@ -35,7 +43,7 @@ class Ceremony:
 
     def __post_init__(self):
         try:
-            if set(self.challenge) != {"cid", "C", "authority"} or not isinstance(self.challenge["authority"], str):
+            if not {"protocol", "draft", "cid", "C", "authority"} <= set(self.challenge) <= {"protocol", "draft", "cid", "C", "authority", "person_origin"} or type(self.challenge["protocol"]) is not int or self.challenge["protocol"] != 1 or self.challenge["draft"] != p.DRAFT or not isinstance(self.challenge["authority"], str):
                 raise ValueError()
             self.cid = p.b64decode(self.challenge["cid"], p.CID_BYTES)
             self.c = p.b64decode(self.challenge["C"], p.SECRET_BYTES)

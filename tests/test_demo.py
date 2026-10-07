@@ -73,7 +73,7 @@ def test_identity_is_escaped_and_nonadmins_are_denied():
 
     with TestClient(create_app(RP()), base_url=APP) as client:
         assert client.get("/admin").status_code == 403
-        client.cookies.set("bytebind_session", "admin")
+        client.cookies.set("__Host-bytebind_session", "admin")
         response = client.get("/admin")
         assert response.status_code == 200
         assert '<script>alert("device")</script>' not in response.text

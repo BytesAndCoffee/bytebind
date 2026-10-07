@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 TAG = re.compile(r"tag:[A-Za-z0-9][A-Za-z0-9-]*")
 NODE = re.compile(r"[A-Za-z0-9]+")
 NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
-CLAIMS = frozenset({"device_id", "tags"})
+CLAIMS = frozenset({"device_id", "tags", "person_subject"})
 
 
 class ConfigError(ValueError):
@@ -37,6 +37,17 @@ class RelyingParty:
     grant_ttl: int = 180
     claims: frozenset[str] = frozenset()
     authorization: tuple[str, ...] = ()
+    assurances: frozenset[str] = frozenset({"device"})
+    person_max_age: int = 600
+    person_subjects: frozenset[str] = frozenset()
+    allow_self_enrolled: bool = False
+
+
+@dataclass(frozen=True)
+class PersonConfig:
+    origin: str
+    enrollment_policy: Policy
+    self_enrollment: bool = False
 
 
 @dataclass(frozen=True)
@@ -48,6 +59,7 @@ class AuthorityConfig:
     attest_window: int = 30
     redeem_window: int = 10
     max_pending_per_rp: int = 200
+    person: PersonConfig | None = None
 
     @property
     def origins(self) -> frozenset[str]:
@@ -61,12 +73,20 @@ class AuthorityConfig:
 
 
 def exact_https_origin(value: str) -> bool:
-    parts = urlsplit(value)
+    if not isinstance(value,str):
+        return False
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
     try:
         parts.port
     except ValueError:
         return False
-    return (parts.scheme == "https" and bool(parts.hostname) and not parts.path and not parts.query
+    canonical_host = parts.hostname or ""
+    canonical_host = "[" + canonical_host + "]" if ":" in canonical_host else canonical_host
+    canonical = "https://" + canonical_host + (f":{parts.port}" if parts.port not in (None, 443) else "")
+    return (value == canonical and parts.scheme == "https" and bool(parts.hostname) and not parts.path and not parts.query
             and not parts.fragment and parts.username is None and parts.password is None and "*" not in value)
 
 
@@ -106,6 +126,19 @@ def parse(data: dict) -> AuthorityConfig:
     socket_path = authority.get("tailscale_socket", "/var/run/tailscale/tailscaled.sock")
     if not isinstance(socket_path, str) or not Path(socket_path).is_absolute():
         raise ConfigError("authority.tailscale_socket must be an absolute path")
+    person = None
+    person_table = data.get("person")
+    if person_table is not None:
+        if not isinstance(person_table, dict) or not exact_https_origin(person_table.get("origin", "")):
+            raise ConfigError("person.origin must be a canonical HTTPS origin")
+        if person_table["origin"] == attest_url:
+            raise ConfigError("person and attestation need separate listeners")
+        tags = _strings(person_table.get("enrollment_tags", []), "person.enrollment_tags", TAG)
+        if not tags:
+            raise ConfigError("person.enrollment_tags must authorize a dedicated enrollment policy")
+        if type(person_table.get("self_enrollment", False)) is not bool:
+            raise ConfigError("person.self_enrollment must be boolean")
+        person = PersonConfig(person_table["origin"], Policy(frozenset(tags), "all"), person_table.get("self_enrollment", False))
     rps: dict[str, RelyingParty] = {}
     entries = data.get("rp", [])
     if not isinstance(entries, list) or not entries:
@@ -146,10 +179,20 @@ def parse(data: dict) -> AuthorityConfig:
         claims = _strings(entry.get("claims", []), f"rp {rp_id}: claims")
         if not set(claims) <= CLAIMS:
             raise ConfigError(f"rp {rp_id}: claims may only include {sorted(CLAIMS)}")
+        assurances = frozenset(_strings(entry.get("assurances", ["device"]), f"rp {rp_id}: assurances"))
+        if not assurances or not assurances <= {"device", "presence", "verification"}:
+            raise ConfigError(f"rp {rp_id}: invalid assurance")
+        if (assurances - {"device"} or "person_subject" in claims) and person is None:
+            raise ConfigError(f"rp {rp_id}: person listener required")
+        if type(entry.get("allow_self_enrolled", False)) is not bool:
+            raise ConfigError("allow_self_enrolled must be boolean")
         rps[rp_id] = RelyingParty(
             id=rp_id, origin=origin, audiences=frozenset(audiences),
             policy=Policy(frozenset(tags), tag_match, frozenset(_strings(policy_table.get("nodes", []), f"rp {rp_id}: policy.nodes", NODE))),
             unix_uid=uid, tailnet_node=node, grant_ttl=_grant_ttl(entry, rp_id),
+            assurances=assurances, person_max_age=_positive(entry, "person_max_age", 600, maximum=86400),
+            person_subjects=frozenset(_strings(entry.get("person_subjects", []), "person_subjects")),
+            allow_self_enrolled=entry.get("allow_self_enrolled", False),
             claims=frozenset(claims), authorization=tuple(_strings(entry.get("authorization", []), f"rp {rp_id}: authorization")),
         )
     if len({rp.unix_uid for rp in rps.values() if rp.unix_uid is not None}) != sum(rp.unix_uid is not None for rp in rps.values()):
@@ -157,7 +200,7 @@ def parse(data: dict) -> AuthorityConfig:
     if len({rp.tailnet_node for rp in rps.values() if rp.tailnet_node}) != sum(bool(rp.tailnet_node) for rp in rps.values()):
         raise ConfigError("two relying parties share a tailnet_node")
     return AuthorityConfig(
-        attest_url=attest_url, database=database, rps=rps, tailscale_socket=socket_path,
+        attest_url=attest_url, database=database, rps=rps, tailscale_socket=socket_path, person=person,
         attest_window=_positive(authority, "attest_window", 30, maximum=30),
         redeem_window=_positive(authority, "redeem_window", 10, maximum=10),
         max_pending_per_rp=_positive(authority, "max_pending_per_rp", 200),

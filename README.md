@@ -13,15 +13,19 @@ exchange involving an allowed private-overlay device. The browser obtains a
 challenge from the application, completes private attestation, and returns a
 proof for one-time redemption.
 
-- **[SPEC.md](SPEC.md):** protocol v1, specification 0.8-draft (not implemented). The
-  reference implementation follows draft 0.7, in git history at commit `3072234`.
+- **[SPEC.md](SPEC.md):** protocol v1, specification 0.8-draft. The experimental
+  implementation includes optional Authority-owned passkey step-up.
 - **[docs/blog-post.md](docs/blog-post.md):** why it exists, in plain language.
 - **[docs/OVERVIEW.md](docs/OVERVIEW.md):** the exchange in one paragraph.
 - **[docs/ROADMAP.md](docs/ROADMAP.md):** what's planned for draft 0.8, open questions, and what is and isn't verified.
 - **[test-vectors/bytebind-v1.json](test-vectors/bytebind-v1.json):** byte-exact vectors for both profiles.
 
 This repository is the reference implementation, in Python with a dependency-free
-browser client. It targets draft 0.7 and uses Tailscale as the attestation provider.
+browser client. It targets draft 0.8 and uses Tailscale as the attestation provider.
+
+Optional person-gated routes require a passkey ceremony. See
+[person step-up setup](docs/PERSON-STEP-UP.md) for enrollment, route bindings,
+renewal behavior, and the remaining browser acceptance work.
 
 > **Status:** draft protocol, unreviewed implementation. Do not rely on it to
 > protect anything important until it has had an independent security review.

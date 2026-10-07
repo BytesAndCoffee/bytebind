@@ -38,7 +38,7 @@ def test_client_session_transaction_renewal_and_logout(world, clock):
         result = client.get("/status")
         assert result.status_code == 200
         assert result.json()["authorization"] == ["manage:read"]
-        first = client._public.cookies.get("bytebind_session")
+        first = client._public.cookies.get("__Host-bytebind_session")
         assert client.get("/status").status_code == 200
         assert len(private_calls) == 1
         clock.now += 60
@@ -101,7 +101,7 @@ def test_cross_origin_calls_fail_before_io(url):
 def test_attestation_redirect_is_not_followed():
     calls = []
     def public(request):
-        return httpx.Response(200, json={"cid": b64encode(b"c" * 16), "C": b64encode(b"k" * 32), "authority": ATTEST_URL})
+        return httpx.Response(200, json={"protocol":1,"draft":"0.8","cid": b64encode(b"c" * 16), "C": b64encode(b"k" * 32), "authority": ATTEST_URL})
     def private(request):
         calls.append(request)
         return httpx.Response(307, headers={"location": "https://evil.example/attestation"})
@@ -116,7 +116,7 @@ def test_tampered_attestation_never_submits_proof():
     calls = []
     def public(request):
         calls.append(request.url.path)
-        return httpx.Response(200, json={"cid": b64encode(b"c" * 16), "C": b64encode(b"k" * 32), "authority": ATTEST_URL})
+        return httpx.Response(200, json={"protocol":1,"draft":"0.8","cid": b64encode(b"c" * 16), "C": b64encode(b"k" * 32), "authority": ATTEST_URL})
     with Client(APP, transport=httpx.MockTransport(public), attestation_transport=httpx.MockTransport(
             lambda req: httpx.Response(200, json={"H2": b64encode(b"x" * 76)}))) as client:
         with pytest.raises(ClientError, match="attestation"):
@@ -164,7 +164,7 @@ def test_lost_transaction_response_is_not_replayed(world):
     "https://authority.example/path", "https://authority.example#fragment", "https://authority.example:invalid"])
 def test_malformed_authority_never_receives_secrets(authority):
     def public(req):
-        return httpx.Response(200, json={"cid": b64encode(b"c" * 16), "C": b64encode(b"k" * 32), "authority": authority})
+        return httpx.Response(200, json={"protocol":1,"draft":"0.8","cid": b64encode(b"c" * 16), "C": b64encode(b"k" * 32), "authority": authority})
     def private(req):
         pytest.fail("secrets sent to a malformed Authority endpoint")
     with Client(APP, transport=httpx.MockTransport(public), attestation_transport=httpx.MockTransport(private)) as client:

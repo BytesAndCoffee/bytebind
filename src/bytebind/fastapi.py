@@ -19,7 +19,7 @@ from . import binding as b
 from .binding import COVERED_HEADERS, GRANT_KEY, SESSION_COOKIE, STATE_COOKIE, Grant  # noqa: F401 (re-exported)
 from .discovery import AUTHORITY_TAG, AUTHORITY_CAPABILITY
 from .tailscale import Directory
-from .rp import AuthorityError, CeremonyError, Lease, RelyingParty
+from .rp import AuthorityError, CeremonyError, Lease, RelyingParty, _supports_evidence
 
 GRANT_SCOPE_KEY = GRANT_KEY
 
@@ -69,19 +69,28 @@ class ByteBind:
                            authority_capability=authority_capability, authority_port=authority_port,
                            challenge_per_minute=challenge_per_minute, max_transaction_body=max_transaction_body)
 
-        def current_lease(request: Request) -> Lease:
+        def current_lease(request: Request) -> Grant:
             request.state.bytebind_protected = True
+            endpoint=getattr(request.scope.get("route"),"endpoint",None)
+            options=getattr(endpoint,"__bytebind_person__",{})
             lease = self._rp(request).session(request.cookies.get(SESSION_COOKIE))
             if lease is None:
-                raise HTTPException(401, "ByteBind lease required", headers={"X-ByteBind-Required": "1"})
-            return lease
+                raise HTTPException(401,"ByteBind lease required",headers={"X-ByteBind-Required":"1",**({"X-ByteBind-Person":"1"} if options else {})})
+            if options:
+                try:
+                    lease=self._rp(request).require_person(request.cookies.get(SESSION_COOKIE),options["assurance"],options["person_max_age"],options["identify"])
+                except CeremonyError:
+                    raise HTTPException(401,"Person attestation required",headers={"X-ByteBind-Required":"1","X-ByteBind-Person":"1"}) from None
+                except (AuthorityError,OSError):
+                    raise HTTPException(503,"Person validation unavailable") from None
+            return b.lease_view(lease)
         self.lease = Depends(current_lease)
 
         # Resolved before the binding decides to answer with a challenge, so it is None on
         # that first call; a transaction-bound handler itself only ever runs with a grant.
         def current_grant(request: Request) -> Grant | None:
             grant = request.scope.get(GRANT_KEY)
-            return Grant(grant["claims"].get("device_id"), grant["claims"]) if grant else None
+            return Grant(grant["claims"].get("device_id"), grant["claims"], grant.get("assurance")) if grant else None
         self.grant = Depends(current_grant)
         app.state.bytebind = self
 
@@ -91,17 +100,32 @@ class ByteBind:
                             media_type="application/javascript")
 
         @app.post("/bytebind/challenge", include_in_schema=False)
-        def challenge(request: Request):
+        async def challenge(request: Request):
             if not self._allow_challenge(request):
                 return self._rate_limited()
             try:
-                issued, state = self._rp(request).challenge(request.headers.get("origin"))
-            except CeremonyError:
+                raw=await read_capped(request,1024)
+                from . import protocol as p
+                body=p.json_body(raw or b"{}")
+                if set(body) not in (set(),{"target"}) or (body and (not isinstance(body["target"],str) or not body["target"].startswith("/") or body["target"].startswith("//"))):
+                    raise CeremonyError("invalid challenge target")
+                options={}
+                if body:
+                    scope=dict(request.scope,method="GET",path=body["target"].split("?")[0])
+                    for route in app.router.routes:
+                        match,_=route.matches(scope)
+                        if match==Match.FULL:
+                            options=getattr(getattr(route,"endpoint",None),"__bytebind_person__",{})
+                            break
+                    if not options:
+                        raise CeremonyError("target has no person session policy")
+                issued,state=await run_in_threadpool(self._rp(request).challenge,request.headers.get("origin"),previous_session=request.cookies.get(SESSION_COOKIE),**options)
+            except (CeremonyError,ValueError,p.ProtocolError):
                 return self._failed(403)
             except (AuthorityError, OSError):
                 return self._failed(503)
             response = JSONResponse(issued, headers={"Cache-Control": "no-store"})
-            self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 60)
+            self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 210)
             return response
 
         @app.post("/bytebind/proof", include_in_schema=False)
@@ -157,7 +181,7 @@ class ByteBind:
             if protected:
                 response.headers["Cache-Control"] = "no-store"
             if response.headers.get("X-ByteBind-Required") and "text/html" in request.headers.get("accept", "") and request.method == "GET":
-                return HTMLResponse(b.sign_in_page(), status_code=401, headers={"Cache-Control": "no-store"})
+                return HTMLResponse(b.sign_in_page(str(request.url.path)+("?"+str(request.url.query) if request.url.query else "") if response.headers.get("X-ByteBind-Person") else None), status_code=401, headers={"Cache-Control": "no-store"})
             # Renewal runs only on protected pages: public pages must not start ceremonies
             # or make visitors' browsers contact the private Authority.
             if protected and "text/html" in response.headers.get("content-type", "") and not response.headers.get("content-encoding"):
@@ -191,7 +215,7 @@ class ByteBind:
         return JSONResponse({"error": "rate_limited"}, status_code=429,
                             headers={"Cache-Control": "no-store", "Retry-After": "60"})
 
-    async def _challenge_transaction(self, request: Request, operation: str) -> Response:
+    async def _challenge_transaction(self, request: Request, operation: str, assurance="device", identify=False) -> Response:
         """The access request of a transaction-bound operation: store it, bind it by Q, run nothing."""
         if not self._allow_challenge(request):
             return self._rate_limited()
@@ -203,13 +227,13 @@ class ByteBind:
         try:
             issued, state = await run_in_threadpool(
                 self.core.challenge_transaction, self._rp(request), request.headers.get("origin"), operation,
-                request.method, request_target(request), request.headers, body)
+                request.method, request_target(request), request.headers, body, assurance, identify)
         except CeremonyError:
             return self._failed(403)
         except (AuthorityError, OSError):
             return self._failed(503)
         response = JSONResponse(issued, status_code=202, headers={"Cache-Control": "no-store"})
-        self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 60)
+        self._cookie(response, STATE_COOKIE, state, b.STATE_PATH, 210)
         return response
 
     async def _replay(self, request: Request, stored: dict, grant: dict) -> Response:
@@ -219,18 +243,17 @@ class ByteBind:
         handler sees the original method, target, covered headers, and body.
         """
         path, _, query = stored["target"].partition("?")
-        headers = [(key, value) for key, value in request.scope["headers"]
-                   if key not in (b"content-type", b"content-length")]
+        headers = [(b"host",self._rp(request).origin.split("//",1)[1].encode("ascii"))]
         headers += [(name.encode("latin-1"), value.encode("latin-1")) for name, value in stored["headers"].items() if value]
         body = b.stored_body(stored)
         headers.append((b"content-length", str(len(body)).encode()))
         scope = {key: value for key, value in request.scope.items()
-                 if key in ("type", "asgi", "http_version", "scheme", "server", "client", "root_path", "state", "extensions")}
+                 if key in ("type", "asgi", "http_version", "scheme", "server", "client", "root_path")}
         if "state" in scope:
             scope["state"] = dict(scope["state"])  # the replay gets its own request state
         scope.update(method=stored["method"], path=unquote(path), raw_path=path.encode("latin-1"),
                      query_string=query.encode("latin-1"), headers=headers)
-        scope[GRANT_KEY] = {"operation": stored["operation"], "claims": grant.get("claims", {})}
+        scope[GRANT_KEY] = {"operation": stored["operation"], "claims": grant.get("claims", {}), "assurance":grant.get("assurance",{})}
         delivered = False
 
         async def receive():
@@ -266,10 +289,11 @@ class ByteBind:
 
     _script = staticmethod(b.renewal_script)
 
-    def __call__(self, *, require=(), grant=LEASE):
+    def __call__(self, *, require=(), grant=LEASE, assurance="device", person_max_age=None, identify=False):
         if grant not in (self.LEASE, self.TRANSACTION):
             raise ValueError("grant must be bind.LEASE or bind.TRANSACTION")
         required = b.check_requirements(require)
+        person_max_age=b.check_assurance(assurance,person_max_age,identify,grant)
 
         def check_origin(request: Request) -> None:
             try:
@@ -293,9 +317,11 @@ class ByteBind:
                 response.headers["Cache-Control"] = "no-store"
                 granted = request.scope.get(GRANT_KEY)
                 if granted is None:
-                    return await self._challenge_transaction(request, operation)
+                    return await self._challenge_transaction(request, operation,assurance,identify)
                 if granted["operation"] != operation:
                     raise HTTPException(403, "grant is for another operation")
+                if not _supports_evidence(granted.get("assurance"),assurance,transaction=True):
+                    raise HTTPException(403,"Missing person assurance")
                 if not b.meets(granted["claims"], required):
                     raise HTTPException(403, "ByteBind requirements not met")
                 return None
@@ -320,6 +346,7 @@ class ByteBind:
                 return await run_in_threadpool(endpoint, *args, **kwargs)
 
             protected.__bytebind_transaction__ = grant == self.TRANSACTION
+            protected.__bytebind_person__ = {"assurance":assurance,"person_max_age":person_max_age,"identify":identify} if assurance != "device" and grant == self.LEASE else {}
             protected.__signature__ = signature.replace(parameters=parameters)
             return protected
         return decorate

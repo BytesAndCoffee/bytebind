@@ -58,7 +58,7 @@ def test_requests_session_lease_renewal_and_transaction(world, clock):
         assert isinstance(result, requests.Response)
         result.raise_for_status()
         assert result.json()["authorization"] == ["manage:read"]
-        first = api.cookies.get("bytebind_session")
+        first = api.cookies.get("__Host-bytebind_session")
         assert api.get("/status").status_code == 200
         assert len(private.calls) == 1
         clock.now += 60

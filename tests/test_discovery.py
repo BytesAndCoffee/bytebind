@@ -72,9 +72,10 @@ def test_policy_is_refreshed_and_control_uses_discovered_endpoint(monkeypatch, t
     class Client:
         def __init__(self, endpoint):
             calls.append(endpoint)
+            self.endpoint=endpoint
 
-        def begin(self, *args):
-            return {"begun": args}
+        def begin(self, *args, **kwargs):
+            return {"cid":"cid","begun": args}
 
         def redeem(self, *args):
             return {"redeemed": args}

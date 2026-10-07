@@ -17,9 +17,9 @@ from .protocol import request_digest
 from .rp import AuthorityClient, RelyingParty
 from .tailscale import Directory
 
-STATE_COOKIE = "bytebind_state"
-SESSION_COOKIE = "bytebind_session"
-STATE_PATH = "/bytebind/"
+STATE_COOKIE = "__Host-bytebind_state"
+SESSION_COOKIE = "__Host-bytebind_session"
+STATE_PATH = "/"
 GRANT_KEY = "bytebind.grant"  # set only in-process, on a replayed transaction-bound request
 COVERED_HEADERS = ("content-type",)  # the headers Q covers; the browser client sends exactly these
 MAX_CACHED_ORIGINS = 32
@@ -34,6 +34,13 @@ class Grant:
 
     device_id: str | None
     claims: dict
+    assurance: dict | None = None
+
+
+def lease_view(lease) -> Grant:
+    """Expose claims without the RP's internal renewal and validation tokens."""
+    context = getattr(lease, "context", None) or {}
+    return Grant(lease.device_id, lease.claims, context.get("person_assurance", {"device_attested": True}))
 
 
 def meets(claims: dict, required: frozenset[str]) -> bool:
@@ -54,6 +61,16 @@ def check_requirements(require) -> frozenset[str]:
     return frozenset(require)
 
 
+def check_assurance(assurance, person_max_age, identify, grant):
+    if assurance not in {"device","presence","verification"} or type(identify) is not bool:
+        raise ValueError("unknown assurance or identity option")
+    if identify and assurance == "device":
+        raise ValueError("person identity requires person assurance")
+    if person_max_age is not None and (assurance == "device" or grant == TRANSACTION or type(person_max_age) is not int or person_max_age <= 0):
+        raise ValueError("person_max_age requires a person session")
+    return (person_max_age or 300) if assurance != "device" and grant == LEASE else None
+
+
 def renewal_script(reload: bool) -> str:
     # Renewal keeps its fixed interval after a failure (SPEC.md 15.1): a failed renewal
     # leaves the lease to its stored deadline, and the next one can still succeed.
@@ -67,7 +84,11 @@ def renewal_script(reload: bool) -> str:
             'if(s)s.textContent="Private network access required";}}renew();</script>')
 
 
-def sign_in_page() -> str:
+def sign_in_page(target=None) -> str:
+    if target is not None:
+        import json
+        literal=json.dumps(target).replace("<","\\u003c")
+        return '<!doctype html><title>ByteBind</title><p id="bytebind-status">Connecting…</p><script src="/bytebind/client.js"></script><script>ByteBind.personSession('+literal+').then(()=>location.reload()).catch(()=>{document.getElementById("bytebind-status").textContent="Person verification unavailable";});</script>'
     return '<!doctype html><title>ByteBind</title><p id="bytebind-status">Connecting…</p>' + renewal_script(True)
 
 
@@ -95,7 +116,7 @@ class Core:
         self._challenge_limiter = PeerLimiter(challenge_per_minute)
         self.max_transaction_body = max_transaction_body
         self.authority = authority or os.getenv("BYTEBIND_AUTHORITY")
-        self.authority_client = (AuthorityClient(self.authority) if self.authority else
+        self.authority_client = (AuthorityClient(self.authority,authority_uid=int(os.environ["BYTEBIND_AUTHORITY_UID"]) if "BYTEBIND_AUTHORITY_UID" in os.environ else None) if self.authority else
                                  DiscoveringAuthorityClient(directory,
                                      socket_path=tailscale_socket or os.getenv("BYTEBIND_TAILSCALE_SOCKET", "/var/run/tailscale/tailscaled.sock"),
                                      tag=authority_tag, capability=authority_capability, port=authority_port))
@@ -124,10 +145,10 @@ class Core:
         return body is None or len(body) <= self.max_transaction_body
 
     def challenge_transaction(self, rp: RelyingParty, origin: str | None, operation: str, method: str,
-                              target: str, headers: Mapping[str, str], body: bytes) -> tuple[dict, str]:
+                              target: str, headers: Mapping[str, str], body: bytes, assurance="device", identify=False) -> tuple[dict, str]:
         """Store a transaction-bound request, bound by Q; returns the challenge and state token."""
         covered = {name: headers.get(name, "") for name in COVERED_HEADERS}
         q = request_digest(method, target, covered, body)
         stored = {"operation": operation, "method": method, "target": target, "headers": covered,
                   "body": base64.b64encode(body).decode("ascii")}
-        return rp.challenge(origin, request=stored, q=q)
+        return rp.challenge(origin, request=stored, q=q, assurance=assurance, identify=identify)

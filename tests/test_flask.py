@@ -124,7 +124,7 @@ def test_transaction_grant_runs_the_view_once_after_approval(world):
 
     def approve(url, body):
         challenged = browser.post(url, data=body, headers={"Content-Type": "application/json"})
-        assert challenged.status_code == 202 and set(challenged.get_json()) == {"cid", "C", "authority"}
+        assert challenged.status_code == 202 and set(challenged.get_json()) == {"protocol", "draft", "cid", "C", "authority"}
         q = request_digest("POST", url, {"content-type": "application/json"}, body)
         return browser_proof(authority, challenged.get_json(), "tx", q)
 
@@ -162,7 +162,7 @@ def test_a_client_cannot_supply_a_grant(world):
 
 def test_challenges_are_rate_limited_per_client(config, tmp_path):
     class RP:
-        def challenge(self, origin):
+        def challenge(self, origin, **kwargs):
             return {"cid": "c", "C": "k", "authority": ATTEST_URL}, "state"
 
     app = flask.Flask(__name__)

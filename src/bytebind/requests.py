@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit
 import requests
 
 from . import protocol as p
-from ._client import Ceremony, ClientError, response_json
+from ._client import Ceremony, ClientError, StepUpRequired, response_json
 
 
 def _origin(value: str) -> str:
@@ -83,7 +83,10 @@ class Session(requests.Session):
         _require_tls(kwargs.get("verify", self.verify))
         kwargs["allow_redirects"] = False
         kwargs.setdefault("timeout", self.timeout)
-        return super().send(request, **kwargs)
+        response = super().send(request, **kwargs)
+        if response.headers.get("X-ByteBind-Person") == "1":
+            raise StepUpRequired()
+        return response
 
     def _post(self, path: str, body: dict, step: str) -> requests.Response:
         try:

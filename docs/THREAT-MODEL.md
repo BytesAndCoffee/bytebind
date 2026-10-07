@@ -1,7 +1,7 @@
 # ByteBind threat model
 
-**Scope:** the protocol as implemented (draft 0.7, git `3072234`; `SPEC.md` is now
-the unimplemented 0.8 draft, whose person step-up is covered in §6.10) and the
+**Scope:** the experimental protocol v1 implementation of specification 0.8-draft,
+whose person step-up is covered in §6.10, and the
 reference implementation: the
 Authority (`authority.py`, `store.py`, `config.py`), the Tailscale attestation
 provider (`tailscale.py`), Authority discovery (`discovery.py`), the RP core and
@@ -525,10 +525,11 @@ the operations docs and set log retention to match.
 ceremonies tell an RP whether a visitor's device is authorized for it, without
 any user action. This is limited to RPs the operator registered.
 
-### 6.10 Person step-up (specification 0.8-draft; not implemented)
+### 6.10 Person step-up (specification 0.8-draft; experimental)
 
 These threats apply to the optional Authority-owned WebAuthn step-up in
-`SPEC.md` sections 10–17. Nothing here is implemented.
+`SPEC.md` sections 10–17. The experimental code and signed synthetic tests cover
+these checks; real-browser acceptance and independent review remain open.
 
 | Threat or boundary | Treatment |
 |---|---|

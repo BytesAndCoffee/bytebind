@@ -90,6 +90,12 @@ const ByteBind = (() => {
 
   // Attestation, then compute R. Returns the proof to submit to the RP.
   async function attestAndProve(challenge, profile, q, fetchImpl) {
+    if (challenge.protocol !== 1 || challenge.draft !== "0.8" ||
+        Object.keys(challenge).some(key=>!["protocol","draft","cid","C","authority","person_origin"].includes(key))) {
+      throw new CeremonyFailure("challenge", 0);
+    }
+    const authority = new URL(challenge.authority);
+    if(authority.protocol!=="https:" || authority.username || authority.password || authority.search || authority.hash || authority.pathname!=="/") throw new CeremonyFailure("challenge",0);
     const cid = b64decode(challenge.cid, SIZES.cid);
     const c = b64decode(challenge.C, SIZES.secret);
     const n = globalThis.crypto.getRandomValues(new Uint8Array(SIZES.secret));
@@ -97,25 +103,51 @@ const ByteBind = (() => {
     let attested;
     try {
       attested = await fetchImpl(`${challenge.authority}/attestation`, {
-        method: "POST", mode: "cors", credentials: "omit", headers: { "Content-Type": "application/json" },
+        method: "POST", mode: "cors", credentials: "omit", redirect:"error", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cid: challenge.cid, N: b64encode(n), H1: b64encode(h1) }),
       });
     } catch (_) {
       throw new CeremonyFailure("attestation", 0);  // not on the private network, or blocked by the browser
     }
     if (!attested.ok) throw new CeremonyFailure("attestation", attested.status);
-    const { ip, s } = await openH2(profile, c, cid, n, h1, b64decode((await attested.json()).H2, SIZES.h2));
+    let result=await attested.json();
+    if(attested.status===202) {
+      if(!challenge.person_origin || Object.keys(result).join()!=="step_up" || !result.step_up || Object.keys(result.step_up).sort().join()!=="completion,handoff,url") throw new CeremonyFailure("step-up",0);
+      const step=result.step_up, person=new URL(challenge.person_origin), url=new URL(step.url);
+      if(person.protocol!=="https:" || person.username || person.password || person.origin!==challenge.person_origin || person.pathname!=="/" || person.search || person.hash || url.origin!==person.origin || url.username || url.password || url.search || url.hash || !/^\/step-up\/[a-z0-9][a-z0-9._-]{0,63}$/.test(url.pathname)) throw new CeremonyFailure("step-up",0);
+      b64decode(step.handoff,32);b64decode(step.completion,32);
+      if(typeof document==="undefined" || globalThis.top!==globalThis.self) throw new CeremonyFailure("step-up",0);
+      const frame=document.createElement("iframe");frame.title="ByteBind person verification";
+      frame.src=url.href+"#"+step.handoff;
+      frame.allow=`publickey-credentials-get ${person.origin}; local-network ${person.origin}; local-network-access ${person.origin}`;
+      document.body.appendChild(frame);
+      const until=Date.now()+150000;
+      try {
+        do {
+          const poll=await fetchImpl(`${challenge.authority}/attestation/result`,{
+            method:"POST",mode:"cors",credentials:"omit",redirect:"error",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({cid:challenge.cid,completion:step.completion,N:b64encode(n),H1:b64encode(h1)})});
+          if(!poll.ok) throw new CeremonyFailure("step-up",poll.status);
+          result=await poll.json();
+          if(poll.status===200) break;
+          if(poll.status!==202 || result.pending!==true) throw new CeremonyFailure("step-up",poll.status);
+          await new Promise(resolve=>setTimeout(resolve,2000));
+        } while(Date.now()<until);
+        if(!result.H2) throw new CeremonyFailure("step-up",0);
+      } finally {frame.remove();}
+    } else if(attested.status!==200) throw new CeremonyFailure("attestation",attested.status);
+    const { ip, s } = await openH2(profile, c, cid, n, h1, b64decode(result.H2, SIZES.h2));
     return { cid: challenge.cid, R: b64encode(await computeR(profile, s, cid, c, ip, q)) };
   }
 
   const jsonPost = (fetchImpl, url, body) => fetchImpl(url, {
-    method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Accept: "application/json" },
+    method: "POST", credentials: "same-origin", redirect: "error", headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
   });
 
   // Session profile: request a challenge for a lease, then submit the proof. Resolves to the application response body.
-  async function session(challengeUrl, proofUrl, fetchImpl = globalThis.fetch.bind(globalThis)) {
-    const challenged = await jsonPost(fetchImpl, challengeUrl, {});
+  async function session(challengeUrl, proofUrl, fetchImpl = globalThis.fetch.bind(globalThis), challengeBody={}) {
+    const challenged = await jsonPost(fetchImpl, challengeUrl, challengeBody);
     if (!challenged.ok) throw new CeremonyFailure("challenge", challenged.status);
     const proof = await attestAndProve(await challenged.json(), "session", undefined, fetchImpl);
     const response = await jsonPost(fetchImpl, proofUrl, proof);
@@ -130,7 +162,7 @@ const ByteBind = (() => {
     const bodyBytes = typeof body === "string" ? bytes(body) : body;
     const target = new URL(url, globalThis.location ? globalThis.location.href : undefined);
     const challenged = await fetchImpl(target.href, {
-      method, credentials: "same-origin", headers: { "Content-Type": contentType }, body: bodyBytes,
+      method, credentials: "same-origin", redirect: "error", headers: { "Content-Type": contentType }, body: bodyBytes,
     });
     if (challenged.status !== 202) throw new CeremonyFailure("challenge", challenged.status);
     const q = await requestDigest(method, target.pathname + target.search, { "content-type": contentType }, bodyBytes);
@@ -138,7 +170,9 @@ const ByteBind = (() => {
     return jsonPost(fetchImpl, proofUrl, proof);
   }
 
-  return { b64encode, b64decode, requestDigest, computeH1, openH2, computeR, session, transaction, CeremonyFailure, LABELS, RENEW_INTERVAL_MS };
+  const personSession = target => session("/bytebind/challenge","/bytebind/proof",globalThis.fetch.bind(globalThis),{target});
+
+  return { personSession, b64encode, b64decode, requestDigest, computeH1, openH2, computeR, session, transaction, CeremonyFailure, LABELS, RENEW_INTERVAL_MS };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = ByteBind;

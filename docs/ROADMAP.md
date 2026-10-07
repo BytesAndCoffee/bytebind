@@ -1,10 +1,12 @@
 # ByteBind roadmap
 
-## Specification 0.8-draft (not implemented)
+## Specification 0.8-draft (experimental implementation)
 
 `SPEC.md` now specifies protocol v1 at draft 0.8: the full base protocol plus
 optional Authority-owned WebAuthn person step-up. The reference implementation
-still implements draft 0.7 (git `3072234`). Review records are in
+now implements the base exchange and optional person step-up, with signed
+synthetic-authenticator tests. Real private-HTTPS browser acceptance, independent
+review, and recovery approval remain open. Draft 0.7 is in git `3072234`. Review records are in
 [drafts/SPEC-0.8-REVIEW-NOTES.md](drafts/SPEC-0.8-REVIEW-NOTES.md).
 
 ### Release gates
@@ -53,7 +55,7 @@ still implements draft 0.7 (git `3072234`). Review records are in
    claim; non-synced and attestation-provenance profiles; opaque address
    commitments; the draft-0.7 device-bound IdP profile (removed in 0.8).
 
-### Protocol tests to write
+### Protocol acceptance checklist
 
 - Ordering and access:
   - base attestation before any handoff or options;

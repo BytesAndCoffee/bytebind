@@ -97,11 +97,11 @@ def test_tag_claims_and_sync_handlers(tmp_path):
         return {"device": lease.device_id}
 
     with TestClient(app, base_url=APP) as client:
-        client.cookies.set("bytebind_session", "valid")
+        client.cookies.set("__Host-bytebind_session", "valid")
         response = client.get("/admin")
         assert response.json() == {"device": "node"}
         assert response.headers["cache-control"] == "no-store"
-        client.cookies.set("bytebind_session", "wrong-claim")
+        client.cookies.set("__Host-bytebind_session", "wrong-claim")
         assert client.get("/admin").status_code == 403
 
 
@@ -141,12 +141,12 @@ def test_default_adapter_discovers_remote_authority(config, unix_control, tmp_pa
         challenge = client.post("/bytebind/challenge").json()
         assert client.post("/bytebind/proof", json=browser_proof(authority, challenge)).status_code == 200
         assert client.get("/admin").json() == {"device": "nLaptop1CNTRL"}
-        assert endpoints == ["https://authority.tail123.ts.net:9443"] * 2
+        assert endpoints == ["https://authority.tail123.ts.net:9443",f"unix:{path}"]
 
 
 def test_ceremony_starts_are_rate_limited_per_client():
     class RP:
-        def challenge(self, origin):
+        def challenge(self, origin, **kwargs):
             return {"cid": "c", "C": "k", "authority": ATTEST_URL}, "state"
 
     app = FastAPI()
@@ -194,7 +194,7 @@ def test_transaction_grant_runs_the_handler_once_after_approval(config, unix_con
 
     def approve(client, authority, url, body):
         challenged = client.post(url, content=body, headers={"Content-Type": "application/json"})
-        assert challenged.status_code == 202 and set(challenged.json()) == {"cid", "C", "authority"}
+        assert challenged.status_code == 202 and set(challenged.json()) == {"protocol", "draft", "cid", "C", "authority"}
         q = request_digest("POST", url, {"content-type": "application/json"}, body)
         return browser_proof(authority, challenged.json(), "tx", q)
 

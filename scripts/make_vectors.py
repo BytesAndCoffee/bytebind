@@ -49,7 +49,7 @@ def vectors() -> dict:
     ]
     return {
         "protocol": "ByteBind",
-        "version": "draft 0.7",
+        "version": "draft 0.8",
         "encoding": "byte values are unpadded base64url",
         "labels": {profile: {k: v.decode() for k, v in labels.items()} for profile, labels in p.LABELS.items()} | {"request": p.REQUEST_LABEL.decode()},
         "cases": cases,
