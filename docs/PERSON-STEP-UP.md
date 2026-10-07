@@ -1,9 +1,11 @@
 # Authority-owned person step-up
 
 The experimental implementation targets protocol v1, specification 0.8-draft.
-Signed synthetic authenticators exercise the verifier. Real Chrome, Safari and
-Firefox on private HTTPS, platform authenticators and security keys still need
-acceptance testing; see [the release gates](ROADMAP.md). Recovery is disabled.
+Signed synthetic authenticators exercise the verifier. Headless Chrome on
+loopback HTTPS has completed registration and invisible-frame step-up with a
+virtual authenticator. Acceptance on real tailnet HTTPS with platform
+authenticators and security keys, including Safari and Firefox, remains open;
+see [the recorded results and release gates](ROADMAP.md). Recovery is disabled.
 
 ## Operator setup
 
@@ -56,7 +58,15 @@ after 15 minutes. Either case works, with or without the hyphen. Failed guesses
 are limited to 10 per stable device and 100 across the Authority in any 15-minute
 window. These limits persist across listener restarts and IP changes; after the
 budget is exhausted, even a correct code must wait. Previously issued long
-invites remain usable until their existing expiry. On an enrollment-authorized device, open
+invites remain usable until their existing expiry.
+
+Assign `tag:bytebind-enrollment` to the device whose browser will register or
+manage passkeys. The Authority node does not need that tag just to serve the
+listener. An invite authorizes creation of a person subject; the enrollment tag
+authorizes a device to use that private service. Neither establishes device
+ownership as person identity.
+
+On an enrollment-authorized device, open
 `https://authority.example-tailnet.ts.net:8444/enroll`, paste the invite, choose
 **Continue**, then **Create passkey**. Naming the passkey is optional.
 The `/manage` page requires a fresh verified passkey before listing, renaming,
@@ -101,8 +111,9 @@ Base attestation runs first. The Authority's invisible per-RP iframe then prepar
 passkey options and invokes WebAuthn once. The browser's native passkey prompt
 handles selection and verification; there is no embedded Authority panel or extra
 verification button. If the browser blocks the call or the user cancels, the
-attempt is aborted without an automatic retry or reduced assurance. Enrollment
-and management remain visible top-level pages. The frame sends no messages,
+page attempts to abort it; if that request fails, the stored deadline expires it.
+There is no automatic retry or reduced assurance. Enrollment and management
+remain visible top-level pages. The frame sends no messages,
 identity, attestation proof or H2 to the application page. The original client
 collects H2 through the base listener and submits the ordinary RP proof.
 

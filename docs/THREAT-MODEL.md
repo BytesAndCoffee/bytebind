@@ -10,9 +10,12 @@ browser client (`web/bytebind.js`), the API clients (`client.py`, `requests.py`,
 `_client.py`), and the demo deployment (`examples/demo`).
 
 **Basis:** the original device-only review, the 0.8 implementation review of
-`a1e2b2e`, and follow-up through `a44e0a6` on 2026-10-06. The recorded run passes
-231 tests with `fido2==2.2.1`, including signed synthetic assertions and local
-Unix control. Real-tailnet and browser acceptance remain open; see ROADMAP.md.
+`a1e2b2e`, and follow-up through `c1f6e88`. The recorded run passes
+260 tests with `fido2==2.2.1`, including signed synthetic assertions, local
+Unix control, durable invite budgets and hidden-frame cancellation. A separate
+headless Chrome/virtual-authenticator test completed the person exchange on
+loopback HTTPS. The real-tailnet/browser acceptance matrix remains open; see
+[ROADMAP.md](ROADMAP.md).
 Agent review does not replace independent security review.
 
 Severity assumes a typical deployment: one Authority, a few RPs on public
@@ -257,8 +260,9 @@ also run cleanup on a timer.
 
 **T-A8. Wall-clock dependence. Low, Accepted.** Windows and leases use
 `time.time()`. A backward clock step lengthens attestation and redeem windows
-and RP leases. Durations are capped (30 s, 10 s, 300 s), so the effect is
-bounded.
+and RP leases. Configured durations cap the nominal windows, but do not bound
+the extension caused by a backward clock change. Operators must maintain a
+reliable host clock; monotonic deadline handling remains a hardening option.
 
 ### 6.3 Tailscale provider and tailnet policy
 
@@ -276,7 +280,9 @@ approved a transaction, and node-key expiry is off by default for tagged nodes,
 so a stolen tagged laptop stays authorized until someone removes it.
 **Recommendation:** document both points. For human admin devices, evaluate user-owned devices
 plus app capabilities (ROADMAP: "app capabilities vs tags") or posture checks.
-Add the device's user to grants once the provider can map it reliably.
+Routes that need the participating person's identity must request independent
+WebAuthn assurance and permitted `person_subject` disclosure. Provider owner
+metadata must never supply that identity (SPEC.md §10.1).
 
 **T-TS3. Network paths that inherit a node's identity. Medium, Open.**
 The Authority attests *the tailnet address the connection came from*. Every one
@@ -288,9 +294,11 @@ of these shows up as the authorized node:
   including other hosts if the listener isn't loopback-only;
 - LAN hosts behind a subnet router that SNATs into the tailnet.
 
-**Recommendation:** in deployment guidance, never tag subnet routers,
-container hosts, CI runners, multi-user hosts, or nodes running tailscaled proxy
-listeners with an accepted tag.
+**Recommendation:** assign accepted tags only when the operator trusts every
+process and delegated network path able to use that node's identity. Restrict
+proxy listeners and SNAT paths. An automation node may hold the automated role;
+a shared device may hold an interactive role, with independent person assurance
+where the route requires it. Neither role isolates processes or downstream clients.
 
 **T-TS4. LocalAPI field drift. Low, Open (ROADMAP).** Parsing fails closed when
 it sees unknown shapes. A future change in what `ShareeNode` or `Sharer` mean
@@ -442,8 +450,8 @@ they can expose a node's identity to callers beyond that device.
 **Recommendation:** restrict tag ownership, assign automation and interactive
 roles deliberately, return the needed tag claims, and require the appropriate
 role on each protected route. Use the transaction profile when approval must
-cover one exact request. Add user presence only where the application requires
-human approval.
+cover one exact request. Add person presence or verification where required;
+neither proves informed approval of an operation.
 
 **T-X2. The RP picks the Authority URL. Medium, Open.** The clients POST to any
 HTTPS `authority` named in a challenge. Relay through the client is still
@@ -521,7 +529,7 @@ draft 0.8).
 `H2` decrypts to `IP || S`, and the client does the decrypting. In a browser,
 that's JavaScript served by the RP. Every RP therefore learns the tailnet
 address of each authorized device that visits it, even with `claims = []`, and a tailnet
-address identifies the node. SPEC.md §22 records this limit; selective grant
+address identifies the node. SPEC.md §16 records this limit; selective grant
 disclosure does not hide the address from application-origin code. An opaque
 address commitment remains deferred.
 
@@ -548,6 +556,9 @@ these checks; real-browser acceptance and independent review remain open.
 | Assertion replay or cross-RP/profile/operation reuse | Challenge `W` bound to immutable `cid`/RP/profile/`Q`; atomic consumption |
 | UP/UV downgrade or forged authorization strings | Authority checks flags and policy; RP checks structured assurance; static strings never count |
 | Unauthorized enrollment or existing-subject takeover | Dedicated enrollment policy; independently authenticated subject attachment; invites never imply device ownership |
+| Guessing a short enrollment invite | Uniform 32-bit code; one-use, at most 15 minutes; persistent atomic failed-guess budgets of 10 per verified device and 100 across the Authority; IP changes and successes do not reset them |
+| Enrollment lockout by an authorized device | A device can exhaust its own guess budget; several can exhaust the Authority budget and block even correct invites for the remaining sliding window. Limits bound guessing, not availability |
+| Registration omits optional credential properties | Accept only when the saved one-use request required discoverability; explicit negative or malformed reports refuse. Exact origin, challenge, RP ID, UP, UV and expiry still checked |
 | Shared device mistaken for the current person | Separate namespaces; no owner-derived subject; no device-wide person cache; associations are per browser lease |
 | Stable identifiers and correlation | Pairwise identifiers by default; global names need explicit permission; credential material stays private |
 | Revocation, recovery, and racing assertions | Generations and atomic checks; immediate Authority-side invalidation; recovery never defaults to device ownership |
@@ -555,7 +566,8 @@ these checks; real-browser acceptance and independent review remain open.
 | Lost device or stolen session | A person requirement adds an independent check; leases stay bounded; revoke device and credentials as appropriate |
 | Authorized-device compromise or powerful extension | Out of scope. Passkeys don't isolate processes or prevent manipulation of an already authorized application |
 | Authority compromise or Authority-page XSS | The Authority is trusted for enrollment, verification, and claims. Its pages are new critical attack surface: CSP, no third-party scripts, isolated UI |
-| Application script overlays or replaces the step-up iframe | The native passkey UI names the Authority RP ID. A fake frame can't produce a valid assertion. No informed-intent guarantee |
+| Application script triggers or replaces the hidden step-up iframe | The native passkey UI identifies the Authority RP ID; hiding the frame preserves required UP/UV and origin checks. A fake frame can't produce a valid assertion. No informed-intent guarantee |
+| Browser refuses hidden-frame WebAuthn, or the user cancels | One native call; best-effort bound abort, otherwise expiry; no automatic retry, frame reveal, popup fallback or assurance downgrade |
 | Another registered origin embeds a transaction's step-up page | Per-RP `frame-ancestors`; handoff refused on another RP's path; a mismatched `topOrigin` refuses and burns |
 | Browser omits `topOrigin` (reported for Safari) | Accepted. Binding rests on browser-enforced per-RP framing and the RP-scoped handoff |
 | Application page framed by another origin | The client requires a top-level application page. Real-browser subframe behavior remains an acceptance gate |

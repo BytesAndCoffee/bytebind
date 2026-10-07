@@ -7,8 +7,8 @@
 The reference implementation in this repository targets this draft. Real-browser
 acceptance and independent security review remain release gates. Draft 0.7 is
 in git history at commit `3072234`; older code section citations refer to that draft.
-Review records for this draft are in
-[docs/drafts/SPEC-0.8-REVIEW-NOTES.md](docs/drafts/SPEC-0.8-REVIEW-NOTES.md).
+Historical review records are preserved in the
+[committed review notes](https://github.com/BytesAndCoffee/bytebind/blob/c1f6e888979aeb61f772340c3c76787ab89e74a5/docs/drafts/SPEC-0.8-REVIEW-NOTES.md).
 Open verification work and release gates are in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -259,7 +259,7 @@ transaction over the control channel:
 POST /v1/transaction
 Content-Type: application/json
 
-{"protocol":1,"audience":"manage","profile":"session","assurance":"device"}
+{"protocol":1,"draft":"0.8","audience":"manage","profile":"session","assurance":"device"}
 ```
 
 The request MUST identify `protocol`, `audience`, `profile`, and `assurance`
@@ -305,7 +305,7 @@ transaction scope, not an asserted client version.
 The RP forwards the client portion:
 
 ```json
-{"protocol": 1, "cid": "<base64url>", "C": "<base64url>",
+{"protocol": 1, "draft": "0.8", "cid": "<base64url>", "C": "<base64url>",
  "authority": "https://authority.example.ts.net:8443"}
 ```
 
@@ -464,7 +464,7 @@ The grant MUST be scoped to the RP, audience, policy, and transaction bound at
 creation, and MUST identify `protocol: 1`:
 
 ```json
-{"protocol": 1, "active": true, "rp_id": "example-rp", "audience": "manage",
+{"protocol": 1, "draft": "0.8", "active": true, "rp_id": "example-rp", "audience": "manage",
  "expires_in": 180,
  "assurance": {"device_attested": true, "user_present": false, "user_verified": false},
  "claims": {"device_id": "node-abc123", "authorization": ["manage:read"]}}
@@ -695,18 +695,19 @@ sequenceDiagram
     participant B as Application page
     participant RP as Application RP
     participant A as Authority
-    participant W as Authority step-up iframe
+    participant W as Invisible Authority iframe
     B->>RP: Request protected route
     RP->>A: Create transaction (assurance, Q)
     A-->>RP: Scoped challenge
-    RP-->>B: protocol, cid, C, authority, person_origin
+    RP-->>B: protocol, draft, cid, C, authority, person_origin
     B->>A: POST /attestation (cid, N, H1)
     A->>A: Checks 1–8; commit base_attested
     alt Person assurance required
         A-->>B: 202 step_up (url, handoff, completion)
-        B->>W: Embed /step-up/<rp_id>#handoff
+        B->>W: Invisibly embed /step-up/<rp_id>#handoff
         W->>A: Exchange handoff; peer re-check
         A-->>W: Options (challenge W)
+        Note over W: Invoke get() once; browser-native passkey prompt
         W->>A: Assertion
         A->>A: Verify; commit redeemable
         loop Long poll
@@ -870,6 +871,13 @@ Registration MUST:
 - require discoverable credentials and UV;
 - use the subject's random user handle, and exclude existing credential IDs.
 
+The reference implementation requests `residentKey: "required"`,
+`requireResidentKey: true`, and `userVerification: "required"`, and retains that
+requirement in the one-use attempt. The optional `credProps.rk` result may be
+absent; omission is accepted only for that stored required-discoverability
+request. An explicit negative or malformed report is refused. This compatibility
+rule does not replace challenge, origin, RP-ID, UP, UV, or expiry validation.
+
 Labels MUST NOT derive from provider principals. Attestation conveyance SHOULD
 be `none`; authenticator-provenance and non-synced policies are deferred.
 
@@ -904,7 +912,7 @@ A grant's `assurance` object carries `device_attested`, `user_present`, and
   Reuse or reconfirmation grants never carry `person_fresh`.
 
 ```json
-{"protocol": 1, "active": true, "rp_id": "moderation", "audience": "manage",
+{"protocol": 1, "draft": "0.8", "active": true, "rp_id": "moderation", "audience": "manage",
  "expires_in": 180,
  "assurance": {"device_attested": true, "user_present": true, "user_verified": true,
                "person_fresh": true, "person_expires_in": 600},

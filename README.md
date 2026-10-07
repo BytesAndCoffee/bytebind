@@ -134,7 +134,8 @@ for public-to-private requests; real deployment behavior remains a testing item.
 | `src/bytebind/client.py` | HTTPX API client for session leases and transaction-bound operations |
 | `src/bytebind/requests.py` | Requests Session with the same ceremony and both profiles |
 | `src/bytebind/web/bytebind.js` | The browser client (WebCrypto only) |
-| `src/bytebind/web/person.js` | Authority-origin passkey controls; no message API to the RP page |
+| `src/bytebind/web/person.js` | Authority-origin enrollment, management, and invisible step-up; no message API to the RP page |
+| `src/bytebind/web/person.css` | Styles for the top-level enrollment and management pages |
 | `examples/` | Relying-party examples, Authority configuration, and nginx/systemd demo setup |
 | `scripts/make_vectors.py` | Regenerates the test vectors |
 
@@ -296,8 +297,13 @@ async def approve(grant=bind.grant):
     return {"approved": True}
 ```
 
-The person listener owns enrollment and verification. Its iframe receives no
-base-attestation proof and sends no messages or identity to the application page.
+The person listener owns enrollment and verification. Its invisible iframe opens
+the browser's native passkey prompt after base attestation. Enrollment and
+management use visible top-level Authority pages. New-subject invites are
+eight-character hex codes, displayed as `AB12-CD34`, single-use and valid for
+at most 15 minutes. Failed guesses have persistent device and Authority limits.
+The iframe receives no base-attestation proof and sends no messages or identity
+to the application page.
 See [person setup](docs/PERSON-STEP-UP.md) for invites, private HTTPS, enrollment
 policy and the open conformance findings. The [RP example](examples/rp_app.py)
 provides `/passkeys`, `/verified` and `/restart-verified`.
@@ -463,8 +469,13 @@ control transports with real Unix-socket peer credentials, cross-RP isolation,
 the state machine and its races, lease capping, and the complete exchange end to end.
 Signed synthetic authenticators exercise the pinned passkey verifier, enrollment,
 person sessions, revocation, and fresh transaction assertions. The recorded run
-through `a44e0a6` passes 231 tests on macOS with `fido2==2.2.1`; real-browser
-private-HTTPS acceptance and independent security review remain open.
+through `c1f6e88` passes 260 tests on macOS with `fido2==2.2.1`, including invite
+normalization, persistent guess budgets, registration without optional
+`credProps.rk`, hidden-frame cleanup, and cancellation. A separate headless
+Chrome test on loopback HTTPS completed registration, invisible-frame assertion,
+Authority verification, and RP redemption with a virtual authenticator. Real
+platform authenticators, Safari/Firefox hidden-frame acceptance, and independent
+security review remain open; see [the roadmap](docs/ROADMAP.md).
 
 ## License
 

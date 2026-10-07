@@ -5,10 +5,10 @@ attest_url = "https://authority.example-tailnet.ts.net:8443"   # browser-facing 
 database = "/var/lib/bytebind/authority.sqlite3"               # only the Authority opens this
 tailscale_socket = "/var/run/tailscale/tailscaled.sock"
 attest_window = 30          # seconds from transaction creation to attestation (at most 30)
-redeem_window = 10          # seconds from attestation to redemption (at most 10)
+redeem_window = 10          # seconds from first committed result delivery to redemption (at most 10)
 max_pending_per_rp = 200
 
-# Separate private listener for passkey registration, management, and step-up.
+# Separate private listener: top-level enrollment/management and invisible step-up.
 [person]
 origin = "https://authority.example-tailnet.ts.net:8444"
 enrollment_tags = ["tag:bytebind-enrollment"]

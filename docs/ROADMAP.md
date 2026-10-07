@@ -5,11 +5,16 @@
 `SPEC.md` now specifies protocol v1 at draft 0.8: the full base protocol plus
 optional Authority-owned WebAuthn person step-up. The reference implementation
 now implements the base exchange and optional person step-up, with signed
-synthetic-authenticator tests. Real private-HTTPS browser acceptance, independent
-review, and recovery approval remain open. Draft 0.7 is in git `3072234`. Design review records are in
-[drafts/SPEC-0.8-REVIEW-NOTES.md](drafts/SPEC-0.8-REVIEW-NOTES.md).
-The [implementation review](drafts/SPEC-0.8-IMPLEMENTATION-REVIEW.md) records open
+synthetic-authenticator tests and a headless Chrome/virtual-authenticator
+exchange on loopback HTTPS. Acceptance with real tailnet HTTPS, platform
+authenticators and security keys across supported browsers, independent review,
+and recovery approval remain open. Draft 0.7 is in git `3072234`. Design review records are in
+[the committed review notes](https://github.com/BytesAndCoffee/bytebind/blob/c1f6e888979aeb61f772340c3c76787ab89e74a5/docs/drafts/SPEC-0.8-REVIEW-NOTES.md).
+The [historical implementation review](https://github.com/BytesAndCoffee/bytebind/blob/c1f6e888979aeb61f772340c3c76787ab89e74a5/docs/drafts/SPEC-0.8-IMPLEMENTATION-REVIEW.md) records
 findings against `a1e2b2e`, with subsequent fixes noted separately.
+`c1f6e88` simplifies enrollment and management, adds eight-character invites and
+durable failed-guess limits, accepts omitted optional credential properties when
+the stored registration required discoverability, and makes step-up frames invisible.
 
 ### Open implementation findings
 
@@ -27,6 +32,11 @@ findings against `a1e2b2e`, with subsequent fixes noted separately.
   tied to its single-process in-memory map.
 
 These findings remain open; documentation updates do not resolve code requirements.
+F6's mandatory `credProps.rk` check was changed in `c1f6e88`: omission is accepted
+only for a stored `residentKey: required` request; an explicit negative or
+malformed report is refused. Signed tests cover the change. Successful real
+Firefox registration remains to be verified. F5 is documented as an ES256-only
+implementation limit; broader algorithm support is still deferred.
 
 ### Release gates
 
@@ -43,11 +53,13 @@ These findings remain open; documentation updates do not resolve code requiremen
    - the actual local-network permission token names and subframe permissions;
    - blocked third-party cookies;
    - refusal when the application page is itself framed;
-   - the unsupported-browser message;
+   - the RP's terminal failure when API support or delegation is unavailable,
+     without revealing the frame or falling back to weaker assurance;
    - result long-polling;
    - synced and discoverable credentials;
    - ES256-only enrollment, including refusal of RS256-only authenticators;
-   - whether each browser returns the required `credProps.rk === true` extension;
+   - discoverable registration when the optional `credProps.rk` result is omitted,
+     and refusal of explicit negative or malformed reports;
    - multiple subjects on one device, and multiple devices for one subject;
    - cancellation and tab closure.
 
@@ -108,6 +120,10 @@ These findings remain open; documentation updates do not resolve code requiremen
   - loss after success with no replay.
 - Disclosure: no forbidden disclosure, and no credential leakage.
 - Enrollment: subject attachment and invites.
+- Enrollment codes: eight hex characters; case/separator normalization;
+  one-use consumption; expiry at 15 minutes; collision reservation; persistent
+  10-per-device/100-per-Authority failed-guess budgets; simultaneous guesses;
+  no budget reset after success, process recreation or an IP change.
 - Sessions:
   - device-only renewal preserves the association without resetting its age;
   - endpoint-triggered validation, including expired freshness, revocation,
@@ -175,16 +191,28 @@ can be claimed.
 
 ## Recorded verification results
 
-The current recorded run through `a44e0a6` reports:
+The recorded run through `c1f6e88` reports:
 
-- 231 passing tests on macOS with the pinned `fido2==2.2.1` verifier, including
+- 260 passing tests on macOS with the pinned `fido2==2.2.1` verifier, including
   both bindings, both headless clients, signed synthetic passkey assertions,
   independent subject enrollment, revocation, renewal, outage and concurrent
-  assertion/delivery/quota checks.
+  assertion/delivery/quota checks, short-invite collision and guess budgets,
+  omitted credential-property reports, enrollment/management UI flows, and
+  invisible-frame success, refusal, cancellation and cleanup.
 - Successful wheel construction and inclusion of both browser scripts and the
   person modules at the initial implementation snapshot.
 - Real local Unix-socket control exchanges with kernel-reported RP and Authority
   peer credentials. Tailnet identity is supplied by test directories.
+- Headless Chrome 154 with a virtual CTAP2 authenticator on separate loopback
+  HTTPS application and Authority origins: registration, hidden cross-origin
+  `get()`, signed assertion acceptance, one-use H2 collection and RP redemption
+  succeed. The frame has zero dimensions, stays outside keyboard navigation and
+  the accessibility tree, and is removed after completion. This is not a test of
+  a physical authenticator, Safari/Firefox, or tailnet local-network permissions.
+- A separately staged dev-vps demo exercised real tailnet device access, private
+  HTTPS certificates and same-host Unix control. It used an overlay on an earlier
+  commit; that exercise does not establish an exact-HEAD deployment or complete
+  the browser acceptance matrix.
 
 The earlier device-only project record reports:
 
@@ -199,8 +227,10 @@ and independent review still required.
 
 ## Verification outstanding
 
-- Real `tailscaled` LocalAPI responses; current tests use recorded shapes.
-- Real tailnet listeners and `tailscale cert` certificates.
+- Repeatable integration coverage using real `tailscaled` LocalAPI responses;
+  automated tests use controlled directories and recorded shapes.
+- The full browser acceptance matrix on real tailnet listeners and certificates;
+  the separate demo exercise covers only part of it.
 - HTTPS control traffic between two tailnet nodes.
 - BSD peer credentials; local socket tests now also run on macOS.
 - Browser local-network access permissions on supported versions.

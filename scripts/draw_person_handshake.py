@@ -13,13 +13,13 @@ rows = [
     ('arrow', 4, 3, 'Device identity and tags'),
     ('note', 'Authority: check base transcript and device policy; pending -> base_attested. Start the 120 s overall person window.'),
     ('arrow', 3, 0, '202 step_up: private URL, handoff, completion'),
-    ('phase', '2. Verify the person inside the Authority frame'),
-    ('arrow', 0, 2, 'Embed person_origin/step-up/rp_id#handoff'),
+    ('phase', '2. Verify the person with the browser-native passkey prompt'),
+    ('arrow', 0, 2, 'Invisibly embed person_origin/step-up/rp_id#handoff'),
     ('note', 'Per-RP framing permits only the registered application. The frame checks support, strips the fragment and keeps tokens in memory. No embedder message API.'),
     ('arrow', 2, 3, 'POST /step-up/handoff'),
     ('note', 'Authority: recheck device; consume handoff; derive W from cid/H1/w; base_attested -> stepup_pending.'),
     ('arrow', 3, 2, 'Attempt token and options'),
-    ('note', 'The person clicks the frame control. WebAuthn get() starts directly from the click with preloaded options and the Authority RP ID.'),
+    ('note', 'The invisible frame invokes WebAuthn get() once. The browser-native prompt handles selection and UP/UV for the Authority RP ID. On cancellation or refusal, attempt a bound abort; never retry automatically.'),
     ('arrow', 2, 3, 'POST /step-up/assertion'),
     ('note', 'Authority: check challenge, exact origin, embedding, subject, UP/UV and counter. Commit evidence and redeemable state atomically; collection is 30 s capped by overall deadline.'),
     ('arrow', 3, 2, 'Success only'),
@@ -41,7 +41,7 @@ rows = [
 
 if __name__ == '__main__':
     render(rows, [170, 575, 980, 1385, 1790],
-           ['Client on device D', 'Public RP', 'Authority frame', 'Private Authority', 'tailscaled'],
+           ['Client on device D', 'Public RP', 'Invisible frame', 'Private Authority', 'tailscaled'],
            1960, 'ByteBind person handshake',
            'Base first; Authority-owned passkey step-up; one-use result and scoped redemption',
            'person-handshake.png')

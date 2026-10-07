@@ -2,7 +2,7 @@ sequenceDiagram
     autonumber
     participant C as Client on device D
     participant RP as Public RP
-    participant W as Authority-origin frame
+    participant W as Invisible Authority-origin frame
     participant A as Private Authority
     participant TS as tailscaled
 
@@ -17,12 +17,12 @@ sequenceDiagram
     Note over A: Check base transcript and device policy<br/>pending → base_attested; start 120 s overall window
     A-->>C: 202 step_up: url, one-use handoff, completion
 
-    C->>W: Embed person_origin/step-up/rp_id#handoff
+    C->>W: Invisibly embed person_origin/step-up/rp_id#handoff
     Note over W: Per-RP frame-ancestors; no message API<br/>Check support; strip fragment; tokens stay in memory
     W->>A: POST /step-up/handoff: handoff, rp_id; Authority Origin
     Note over A: Recheck device; consume handoff<br/>base_attested → stepup_pending; derive W from cid/H1/w
     A-->>W: Attempt token and preloaded passkey options
-    Note over W: Person clicks frame control; invoke WebAuthn directly
+    Note over W: Invoke get() once; browser-native prompt handles selection and UP/UV<br/>On cancellation or refusal, best-effort abort; no automatic retry
     W->>A: POST /step-up/assertion: credential; attempt header
     Note over A: Verify challenge, origin, crossOrigin/topOrigin, subject, UP/UV and counter<br/>Commit evidence atomically; stepup_pending → redeemable<br/>Start 30 s collection window capped by overall deadline
     A-->>W: Success only; no H2, proof or RP identity claims

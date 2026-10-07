@@ -174,8 +174,9 @@ Add these entries to the same tailnet policy's `tagOwners` and `grants`:
 ```
 
 The enrollment device needs the dedicated `tag:bytebind-enrollment` tag; ordinary
-demo access still needs `tag:admin`. Neither private listener goes through the
-public nginx proxy.
+demo access still needs `tag:admin`. Assign the enrollment tag to the browser's
+device, not to the Authority merely because it serves enrollment. Neither
+private listener goes through the public nginx proxy.
 
 Issue a one-use invite using the Authority's service account:
 
@@ -189,6 +190,12 @@ channel; it expires after 15 minutes. In the demo, open **Register or manage pas
 **Register passkey**. This opens the private Authority page. Enter the invite
 and click **Continue**, then **Create passkey**. Naming the passkey is optional.
 Return to the demo and choose **Try passkey step-up**.
+
+Invalid invite guesses are limited to 10 per verified device and 100 across the
+Authority in a sliding 15-minute window. An exhausted budget returns 429 even
+for a correct invite; restarting the listener or changing IP addresses does not
+reset it. A consumed or expired invite needs a new code. If passkey creation
+fails after **Continue**, that invite has already been consumed.
 
 Registration only shows enrollment controls. **Manage existing passkeys** opens
 a separate page where you verify to see passkeys by name, then choose **Rename**,

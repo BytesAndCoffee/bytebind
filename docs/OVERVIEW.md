@@ -13,8 +13,9 @@ application redeems before granting access.
 3. The browser posts a challenge MAC to the Authority's private `/attestation`
    endpoint. The Authority identifies the connecting device and checks policy.
 4. For a person-required route, base acceptance returns a one-use handoff.
-   The browser embeds the private Authority page, where the person clicks a
-   passkey control. The client collects the result through `/attestation/result`.
+   The browser embeds an invisible private Authority frame, which invokes the
+   browser's native passkey prompt. The client collects the result through
+   `/attestation/result` after the assertion succeeds.
    Device-only routes receive the result directly from `/attestation`.
 5. The Authority returns an encrypted secret. The browser uses it to compute a
    redemption MAC and submits that proof to the application.

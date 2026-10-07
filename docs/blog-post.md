@@ -57,7 +57,11 @@ The base exchange establishes participation through an authorized private-networ
 device. It does not identify the person using that device. An application can
 require `presence` or `verification` assurance in its route binding. Base
 attestation still runs first; the private Authority then collects a passkey
-assertion in its own iframe before releasing the proof material.
+assertion in an invisible iframe before releasing the proof material. The frame
+opens the browser's native passkey prompt directly; it adds no panel to the
+application page. Enrollment and passkey management use separate top-level
+Authority pages. An operator's one-use enrollment invite is eight hex characters
+and expires after 15 minutes, with persistent limits on failed guesses.
 
 The Authority owns person subjects and passkey registration. A device's provider
 account or owner never supplies the current person identity. Shared devices and
@@ -106,10 +110,13 @@ Its cryptography uses HMAC-SHA256, HKDF-SHA256, and AES-256-GCM. The design work
 
 The experimental implementation has unit and integration coverage, including
 signed synthetic passkey assertions and both session and transaction flows.
-Real-tailnet identity and certificate behavior, cross-node control traffic,
-real-browser passkeys and permissions, and independent security review remain
-outstanding. Agent reviews have also identified implementation findings tracked
-in the roadmap. I am publishing the draft to get those assumptions examined.
+The recorded suite through `c1f6e88` has 260 passing tests. A headless Chrome
+test on loopback HTTPS also completed passkey registration and invisible-frame
+step-up with a virtual authenticator. That checks the browser API and exchange,
+while acceptance with real platform authenticators, Safari and Firefox,
+local-network permissions, cross-node control traffic, and independent security
+review remain open. The roadmap records those gates and the implementation
+findings from agent review. I am publishing the draft to get those assumptions examined.
 
 Read the [technical companion](https://blog.bytes.coffee/2026/10/bytebind-under-the-hood/)
 for the original device exchange, the [current specification](https://github.com/BytesAndCoffee/bytebind/blob/main/SPEC.md)
